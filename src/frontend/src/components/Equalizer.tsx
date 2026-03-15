@@ -6,28 +6,40 @@ import { AudioEngine, audioEngine } from "../audio/AudioEngine";
 
 const SMOOTH_JAZZ = [3, 4, 2, 1, 0, 2, 3, 2, 1, 0];
 
-export function Equalizer() {
-  const [bands, setBands] = useState<number[]>(new Array(10).fill(0));
+interface EqualizerProps {
+  initialBands?: number[];
+  onBandsChange?: (bands: number[]) => void;
+}
+
+export function Equalizer({ initialBands, onBandsChange }: EqualizerProps) {
+  const [bands, setBands] = useState<number[]>(
+    initialBands ?? new Array(10).fill(0),
+  );
   const [eqOn, setEqOn] = useState(true);
   const [blendVal, setBlendVal] = useState(50);
   const [spaceVal, setSpaceVal] = useState(50);
 
+  const updateBands = (next: number[]) => {
+    setBands(next);
+    onBandsChange?.(next);
+  };
+
   const setBand = (i: number, val: number) => {
     const next = [...bands];
     next[i] = val;
-    setBands(next);
+    updateBands(next);
     if (eqOn) audioEngine.setEQBand(i, val);
   };
 
   const applyPreset = (values: number[]) => {
-    setBands([...values]);
+    updateBands([...values]);
     for (let i = 0; i < values.length; i++) audioEngine.setEQBand(i, values[i]);
   };
 
   const boostRange = (indices: number[]) => {
     const next = [...bands];
     for (const i of indices) next[i] = Math.min(12, next[i] + 3);
-    setBands(next);
+    updateBands(next);
     for (const i of indices) audioEngine.setEQBand(i, next[i]);
   };
 

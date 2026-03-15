@@ -1,4 +1,4 @@
-// AudioEngine singleton — all Web Audio API logic lives here
+// AudioEngine singleton
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
@@ -6,6 +6,7 @@ export class AudioEngine {
   private correctionGain: GainNode | null = null;
   private dbBoostGain: GainNode | null = null;
   private soundMagnetGain: GainNode | null = null;
+  private ampGain: GainNode | null = null;
   private engineGains: GainNode[] = [];
   private eqFilters: BiquadFilterNode[] = [];
   private limiter: DynamicsCompressorNode | null = null;
@@ -40,7 +41,8 @@ export class AudioEngine {
     "SUPER",
   ];
 
-  private static readonly ENGINE_GAINS = [1.2, 1.3, 1.1, 1.4];
+  // Normalized so all 4 engines sum to ~1.0 — prevents limiter clamping at low volumes
+  private static readonly ENGINE_GAINS = [0.24, 0.26, 0.22, 0.28];
 
   private ensureContext() {
     if (this.ctx) return;
@@ -59,12 +61,19 @@ export class AudioEngine {
 
     this.masterGain = ctx.createGain();
     this.masterGain.gain.value = 1.0;
+
     this.correctionGain = ctx.createGain();
     this.correctionGain.gain.value = 1.0;
+
     this.dbBoostGain = ctx.createGain();
     this.dbBoostGain.gain.value = 1.0;
+
     this.soundMagnetGain = ctx.createGain();
     this.soundMagnetGain.gain.value = 1.0;
+
+    // Saft mode — starts at 0 until battery charged
+    this.ampGain = ctx.createGain();
+    this.ampGain.gain.value = 0;
 
     this.engineGains = AudioEngine.ENGINE_GAINS.map((g) => {
       const node = ctx.createGain();
@@ -82,12 +91,13 @@ export class AudioEngine {
     });
 
     this.noiseGateNode = ctx.createDynamicsCompressor();
-    this.noiseGateNode.threshold.value = -100;
+    this.noiseGateNode.threshold.value = 0;
     this.noiseGateNode.knee.value = 0;
     this.noiseGateNode.ratio.value = 20;
     this.noiseGateNode.attack.value = 0.003;
     this.noiseGateNode.release.value = 0.25;
 
+    // Safety limiter — brick wall at -1 dBFS
     this.limiter = ctx.createDynamicsCompressor();
     this.limiter.threshold.value = -1;
     this.limiter.knee.value = 0;
@@ -99,7 +109,7 @@ export class AudioEngine {
     this.oscGain.gain.value = 0;
 
     const mixer = ctx.createGain();
-    mixer.gain.value = 0.25;
+    mixer.gain.value = 1.0;
 
     for (const eg of this.engineGains) {
       this.masterGain.connect(eg);
@@ -117,7 +127,8 @@ export class AudioEngine {
     this.correctionGain.connect(this.noiseGateNode);
     this.noiseGateNode.connect(this.soundMagnetGain);
     this.soundMagnetGain.connect(this.limiter);
-    this.limiter.connect(this.analyser);
+    this.limiter.connect(this.ampGain);
+    this.ampGain.connect(this.analyser);
     this.analyser.connect(ctx.destination);
     this.oscGain.connect(this.limiter);
   }
@@ -155,9 +166,10 @@ export class AudioEngine {
     return this.isPlaying;
   }
 
+  // Volume: 0-100 maps to 0-0.7 gain — leaves headroom for DB boost
   setVolume(value: number) {
     this.ensureContext();
-    if (this.masterGain) this.masterGain.gain.value = value / 100;
+    if (this.masterGain) this.masterGain.gain.value = (value / 100) * 0.7;
   }
 
   setEQBand(index: number, gainDb: number) {
@@ -166,11 +178,11 @@ export class AudioEngine {
     if (f) f.gain.value = gainDb;
   }
 
-  // FIX 1: 5x gain at 100% (was 3x)
+  // DB Boost: 0-100 maps to 1.0x-3.0x — super clear, no limiter slamming
   setDBBoost(value: number) {
     this.ensureContext();
     if (this.dbBoostGain)
-      this.dbBoostGain.gain.value = 1.0 + (value / 100) * 4.0;
+      this.dbBoostGain.gain.value = 1.0 + (value / 100) * 2.0;
   }
 
   toggleStabilizer(on: boolean) {
@@ -180,8 +192,7 @@ export class AudioEngine {
 
   toggleNoiseGate(on: boolean) {
     this.ensureContext();
-    if (this.noiseGateNode)
-      this.noiseGateNode.threshold.value = on ? -50 : -100;
+    if (this.noiseGateNode) this.noiseGateNode.threshold.value = on ? -50 : 0;
   }
 
   setFreqGen(hz: number, level: number, active: boolean) {
@@ -229,6 +240,12 @@ export class AudioEngine {
     this.engineActive[index] = active;
     const eg = this.engineGains[index];
     if (eg) eg.gain.value = active ? AudioEngine.ENGINE_GAINS[index] : 0;
+  }
+
+  // Saft mode: 0.85 regulated gain — loud and clean, ceiling at 120 dB
+  setAmpPower(powered: boolean) {
+    this.ensureContext();
+    if (this.ampGain) this.ampGain.gain.value = powered ? 0.85 : 0;
   }
 }
 

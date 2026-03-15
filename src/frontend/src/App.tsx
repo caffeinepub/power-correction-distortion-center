@@ -1,23 +1,30 @@
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { audioEngine } from "./audio/AudioEngine";
 import { BatterySystem } from "./components/BatterySystem";
-import { BrutusAmp } from "./components/BrutusAmp";
 import { CorrectionPanel } from "./components/CorrectionPanel";
 import { DbMeter } from "./components/DbMeter";
 import { Equalizer } from "./components/Equalizer";
 import { FreqNoisePanel } from "./components/FreqNoisePanel";
 import { SoundEngines } from "./components/SoundEngines";
 import { SoundMagnet } from "./components/SoundMagnet";
+import { BrutusAmp } from "./components/amp/BrutusAmp";
 import { MackieMixer } from "./components/mixer/MackieMixer";
 
-const STORAGE_KEY = "pcdc_settings_v1";
+const STORAGE_KEY = "pcdc_settings_v3";
 
 interface SavedSettings {
   volume: number;
   stabilizer: boolean;
+  batteryReady: boolean;
+  dbBoost: number;
+  eqBands: number[];
+  enginesActive: boolean[];
+  noiseGate: boolean;
+  freqHz: number;
+  freqLevel: number;
 }
 
 function loadSettings(): SavedSettings {
@@ -25,16 +32,79 @@ function loadSettings(): SavedSettings {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw) as SavedSettings;
   } catch (_) {}
-  return { volume: 100, stabilizer: false };
+  return {
+    volume: 50,
+    stabilizer: false,
+    batteryReady: false,
+    dbBoost: 0,
+    eqBands: new Array(10).fill(0),
+    enginesActive: [true, true, true, true],
+    noiseGate: false,
+    freqHz: 440,
+    freqLevel: 50,
+  };
+}
+
+function saveSettings(s: SavedSettings) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  } catch (_) {}
 }
 
 export default function App() {
-  const [batteryReady, setBatteryReady] = useState(false);
+  const saved = loadSettings();
+  const [batteryReady, setBatteryReady] = useState(saved.batteryReady);
   const [isPlaying, setIsPlaying] = useState(false);
   const [hasFile, setHasFile] = useState(false);
-  const [volume, setVolume] = useState(() => loadSettings().volume);
-  const [stabilizer, setStabilizer] = useState(() => loadSettings().stabilizer);
+  const [volume, setVolume] = useState(saved.volume);
+  const [stabilizer, setStabilizer] = useState(saved.stabilizer);
+  const [dbBoost, setDbBoost] = useState(saved.dbBoost);
+  const [eqBands, setEqBands] = useState(saved.eqBands);
+  const [enginesActive, setEnginesActive] = useState(saved.enginesActive);
+  const [noiseGate, setNoiseGate] = useState(saved.noiseGate);
+  const [freqHz, setFreqHz] = useState(saved.freqHz);
+  const [freqLevel, setFreqLevel] = useState(saved.freqLevel);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Auto-save whenever key state changes
+  useEffect(() => {
+    saveSettings({
+      volume,
+      stabilizer,
+      batteryReady,
+      dbBoost,
+      eqBands,
+      enginesActive,
+      noiseGate,
+      freqHz,
+      freqLevel,
+    });
+  }, [
+    volume,
+    stabilizer,
+    batteryReady,
+    dbBoost,
+    eqBands,
+    enginesActive,
+    noiseGate,
+    freqHz,
+    freqLevel,
+  ]);
+
+  // Apply volume and db boost on load if battery was already ready
+  // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount only
+  useEffect(() => {
+    if (batteryReady) {
+      audioEngine.setVolume(volume);
+      audioEngine.setDBBoost(dbBoost);
+    }
+  }, [batteryReady]);
+
+  const handleBatteryReady = () => {
+    setBatteryReady(true);
+    audioEngine.setVolume(volume);
+    audioEngine.setDBBoost(dbBoost);
+  };
 
   const handleFileChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -71,8 +141,17 @@ export default function App() {
   };
 
   const handleSave = () => {
-    const s: SavedSettings = { volume, stabilizer };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    saveSettings({
+      volume,
+      stabilizer,
+      batteryReady,
+      dbBoost,
+      eqBands,
+      enginesActive,
+      noiseGate,
+      freqHz,
+      freqLevel,
+    });
     toast.success("Settings saved!");
   };
 
@@ -120,10 +199,15 @@ export default function App() {
 
       <main className="max-w-[1400px] mx-auto px-4 py-6 space-y-5">
         {!batteryReady ? (
-          <BatterySystem onReady={() => setBatteryReady(true)} />
+          <BatterySystem onReady={handleBatteryReady} />
         ) : (
           <>
-            <BatterySystem onReady={() => {}} compact onSave={handleSave} />
+            <BatterySystem
+              onReady={() => {}}
+              compact
+              onSave={handleSave}
+              initialReady={batteryReady}
+            />
             <BrutusAmp powered={batteryReady} />
 
             {/* Transport + Volume panel */}
@@ -197,13 +281,13 @@ export default function App() {
               <div className="space-y-2">
                 <div className="flex justify-between text-sm font-bold font-mono">
                   <span style={{ color: "#facc15" }}>VOLUME</span>
-                  <span style={{ color: "#e2e8f0" }}>{volume} / 200</span>
+                  <span style={{ color: "#e2e8f0" }}>{volume} / 100</span>
                 </div>
                 <input
                   data-ocid="transport.input"
                   type="range"
                   min="0"
-                  max="200"
+                  max="100"
                   step="1"
                   value={volume}
                   onChange={(e) =>
@@ -221,7 +305,7 @@ export default function App() {
                     Clamped by correction system | Output to Bluetooth &amp;
                     Phone
                   </span>
-                  <span>200</span>
+                  <span>100</span>
                 </div>
               </div>
             </div>
@@ -233,9 +317,23 @@ export default function App() {
               stabilizer={stabilizer}
               onStabilizerChange={setStabilizer}
             />
-            <SoundEngines />
-            <Equalizer />
-            <FreqNoisePanel />
+            <SoundEngines
+              initialActive={enginesActive}
+              onActiveChange={setEnginesActive}
+            />
+            <Equalizer initialBands={eqBands} onBandsChange={setEqBands} />
+            <FreqNoisePanel
+              initialDbBoost={dbBoost}
+              initialNoiseGate={noiseGate}
+              initialHz={freqHz}
+              initialFreqLevel={freqLevel}
+              onSettingsChange={(s) => {
+                setDbBoost(s.dbBoost);
+                setNoiseGate(s.noiseGate);
+                setFreqHz(s.hz);
+                setFreqLevel(s.freqLevel);
+              }}
+            />
             <SoundMagnet />
             <MackieMixer />
           </>

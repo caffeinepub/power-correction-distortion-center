@@ -1,14 +1,52 @@
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { audioEngine } from "../audio/AudioEngine";
 
-export function FreqNoisePanel() {
-  const [hz, setHz] = useState(440);
-  const [freqLevel, setFreqLevel] = useState(50);
+interface FreqNoisePanelProps {
+  initialDbBoost?: number;
+  initialNoiseGate?: boolean;
+  initialHz?: number;
+  initialFreqLevel?: number;
+  onSettingsChange?: (s: {
+    dbBoost: number;
+    noiseGate: boolean;
+    hz: number;
+    freqLevel: number;
+  }) => void;
+}
+
+export function FreqNoisePanel({
+  initialDbBoost = 0,
+  initialNoiseGate = false,
+  initialHz = 440,
+  initialFreqLevel = 50,
+  onSettingsChange,
+}: FreqNoisePanelProps) {
+  const [hz, setHz] = useState(initialHz);
+  const [freqLevel, setFreqLevel] = useState(initialFreqLevel);
   const [freqActive, setFreqActive] = useState(false);
-  const [noiseGate, setNoiseGate] = useState(false);
-  const [dbBoost, setDbBoost] = useState(0);
+  const [noiseGate, setNoiseGate] = useState(initialNoiseGate);
+  const [dbBoost, setDbBoost] = useState(initialDbBoost);
+
+  // Apply restored settings to audio engine on mount
+  // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount only
+  useEffect(() => {
+    audioEngine.setDBBoost(initialDbBoost);
+    audioEngine.toggleNoiseGate(initialNoiseGate);
+  }, []);
+
+  const notify = (
+    updates: Partial<{
+      dbBoost: number;
+      noiseGate: boolean;
+      hz: number;
+      freqLevel: number;
+    }>,
+  ) => {
+    const next = { dbBoost, noiseGate, hz, freqLevel, ...updates };
+    onSettingsChange?.(next);
+  };
 
   const toggleFreq = (on: boolean) => {
     setFreqActive(on);
@@ -18,24 +56,28 @@ export function FreqNoisePanel() {
   const updateHz = (val: number) => {
     setHz(val);
     if (freqActive) audioEngine.setFreqGen(val, freqLevel, true);
+    notify({ hz: val });
   };
 
   const updateLevel = (val: number) => {
     setFreqLevel(val);
     if (freqActive) audioEngine.setFreqGen(hz, val, true);
+    notify({ freqLevel: val });
   };
 
   const updateDbBoost = (val: number) => {
     setDbBoost(val);
     audioEngine.setDBBoost(val);
+    notify({ dbBoost: val });
   };
 
   const toggleNoise = (on: boolean) => {
     setNoiseGate(on);
     audioEngine.toggleNoiseGate(on);
+    notify({ noiseGate: on });
   };
 
-  const gainValue = 1.0 + (dbBoost / 100) * 4.0;
+  const gainValue = 1.0 + (dbBoost / 100) * 2.0;
   const boostHigh = dbBoost > 50;
 
   return (
@@ -170,7 +212,7 @@ export function FreqNoisePanel() {
           </div>
         </div>
 
-        {/* DB Boost -- FIX 1: more prominent, correct gain formula, red indicator */}
+        {/* DB Boost */}
         <div
           className="rounded p-4 space-y-3"
           style={{
@@ -264,7 +306,7 @@ export function FreqNoisePanel() {
               />
             </div>
             <div className="text-xs font-mono" style={{ color: "#64748b" }}>
-              Gain: {gainValue.toFixed(2)}x | Clean boost | 5x max
+              Gain: {gainValue.toFixed(2)}x | Super clear clean boost | 3x max
             </div>
           </div>
         </div>

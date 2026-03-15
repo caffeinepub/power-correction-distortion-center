@@ -8,14 +8,25 @@ const ENGINES = [
   { id: "D", label: "D+", color: "#facc15" },
 ];
 
-export function SoundEngines() {
-  const [active, setActive] = useState([true, true, true, true]);
+interface SoundEnginesProps {
+  initialActive?: boolean[];
+  onActiveChange?: (active: boolean[]) => void;
+}
+
+export function SoundEngines({
+  initialActive,
+  onActiveChange,
+}: SoundEnginesProps) {
+  const [active, setActive] = useState(
+    initialActive ?? [true, true, true, true],
+  );
 
   const toggle = (i: number) => {
     const next = [...active];
     next[i] = !next[i];
     setActive(next);
     audioEngine.setEngineActive(i, next[i]);
+    onActiveChange?.(next);
   };
 
   return (

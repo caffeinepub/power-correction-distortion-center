@@ -1,19 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { audioEngine } from "../audio/AudioEngine";
 
-// Maps dBFS (-100..0) to display dB scale (60..140)
-// 0 dBFS = 140 dB | -80 dBFS = 60 dB
+// Maps dBFS (-100..0) to display dB scale (60..120)
+// 0 dBFS = 120 dB | -60 dBFS = 60 dB
 const DBFS_TO_DISPLAY = (dbfs: number) =>
-  Math.max(60, Math.min(140, dbfs + 140));
+  Math.max(60, Math.min(120, dbfs + 120));
 
 const SEGMENTS = [
-  { min: 60, max: 85, color: "#22c55e" },
-  { min: 85, max: 110, color: "#facc15" },
-  { min: 110, max: 125, color: "#f97316" },
-  { min: 125, max: 140, color: "#ef4444" },
+  { min: 60, max: 80, color: "#22c55e" },
+  { min: 80, max: 100, color: "#facc15" },
+  { min: 100, max: 110, color: "#f97316" },
+  { min: 110, max: 120, color: "#ef4444" },
 ];
 
-const TICKS = [60, 70, 80, 90, 100, 110, 120, 130, 140];
+const TICKS = [60, 70, 80, 90, 100, 110, 120];
 
 export function DbMeter() {
   const [level, setLevel] = useState(60);
@@ -48,7 +48,7 @@ export function DbMeter() {
     return () => cancelAnimationFrame(rafRef.current);
   }, []);
 
-  const pct = (val: number) => ((val - 60) / 80) * 100;
+  const pct = (val: number) => ((val - 60) / 60) * 100;
 
   return (
     <div
@@ -71,9 +71,9 @@ export function DbMeter() {
             <span
               style={{
                 color:
-                  level >= 125
+                  level >= 110
                     ? "#ef4444"
-                    : level >= 110
+                    : level >= 100
                       ? "#f97316"
                       : "#22c55e",
                 fontWeight: 700,
@@ -86,7 +86,7 @@ export function DbMeter() {
             PEAK:{" "}
             <span
               style={{
-                color: peak >= 125 ? "#ef4444" : "#facc15",
+                color: peak >= 110 ? "#ef4444" : "#facc15",
                 fontWeight: 700,
               }}
             >
@@ -135,8 +135,8 @@ export function DbMeter() {
           style={{
             left: `calc(${pct(peak)}% - 2px)`,
             width: 3,
-            background: peak >= 125 ? "#ef4444" : "#facc15",
-            boxShadow: `0 0 6px ${peak >= 125 ? "#ef4444" : "#facc15"}`,
+            background: peak >= 110 ? "#ef4444" : "#facc15",
+            boxShadow: `0 0 6px ${peak >= 110 ? "#ef4444" : "#facc15"}`,
             transition: "left 0.1s linear",
           }}
         />
@@ -155,11 +155,11 @@ export function DbMeter() {
               className="text-xs font-mono"
               style={{
                 color:
-                  tick >= 125
+                  tick >= 110
                     ? "#ef4444"
-                    : tick >= 110
+                    : tick >= 100
                       ? "#f97316"
-                      : tick >= 85
+                      : tick >= 80
                         ? "#facc15"
                         : "#64748b",
                 fontSize: 9,
@@ -177,10 +177,10 @@ export function DbMeter() {
         className="flex justify-between text-xs font-mono"
         style={{ color: "#334155", fontSize: 9 }}
       >
-        <span style={{ color: "#22c55e" }}>60–85 dB CLEAN</span>
-        <span style={{ color: "#facc15" }}>85–110 dB LOUD</span>
-        <span style={{ color: "#f97316" }}>110–125 dB HOT</span>
-        <span style={{ color: "#ef4444" }}>125–140 dB MAX</span>
+        <span style={{ color: "#22c55e" }}>60–80 dB CLEAN</span>
+        <span style={{ color: "#facc15" }}>80–100 dB LOUD</span>
+        <span style={{ color: "#f97316" }}>100–110 dB HOT</span>
+        <span style={{ color: "#ef4444" }}>110–120 dB MAX</span>
       </div>
     </div>
   );

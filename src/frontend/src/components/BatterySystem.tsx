@@ -5,6 +5,7 @@ interface BatterySystemProps {
   onReady: () => void;
   compact?: boolean;
   onSave?: () => void;
+  initialReady?: boolean;
 }
 
 const BATTERY_CAPACITY = 8_000_000;
@@ -16,10 +17,11 @@ export function BatterySystem({
   onReady,
   compact,
   onSave,
+  initialReady,
 }: BatterySystemProps) {
-  const [watts, setWatts] = useState(0);
+  const [watts, setWatts] = useState(initialReady ? BATTERY_CAPACITY : 0);
   const [charging, setCharging] = useState(false);
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(initialReady ?? false);
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
 
