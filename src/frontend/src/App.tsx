@@ -9,6 +9,7 @@ import { DbMeter } from "./components/DbMeter";
 import { Equalizer } from "./components/Equalizer";
 import { FreqNoisePanel } from "./components/FreqNoisePanel";
 import { KickDrum } from "./components/KickDrum";
+import { PowerWires } from "./components/PowerWires";
 import { SoundEngines } from "./components/SoundEngines";
 import { SoundMagnet } from "./components/SoundMagnet";
 import { BrutusAmp } from "./components/amp/BrutusAmp";
@@ -33,9 +34,6 @@ interface SavedSettings {
   eqBands: number[];
   enginesActive: boolean[];
   noiseGate: boolean;
-  freqHz: number;
-  freqLevel: number;
-  powerLevel: number;
   rockBassDrop: boolean;
   loudnessSafetyExtreme: boolean;
 }
@@ -49,11 +47,15 @@ function loadSettings(): SavedSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as SavedSettings;
+      const parsed = JSON.parse(raw) as SavedSettings & { powerLevel?: number };
       return {
-        ...parsed,
+        volume: parsed.volume,
+        stabilizer: parsed.stabilizer,
         batteryReady: batteryReady || parsed.batteryReady,
-        powerLevel: parsed.powerLevel ?? 100,
+        dbBoost: parsed.dbBoost,
+        eqBands: parsed.eqBands,
+        enginesActive: parsed.enginesActive,
+        noiseGate: parsed.noiseGate,
         rockBassDrop: parsed.rockBassDrop ?? false,
         loudnessSafetyExtreme: parsed.loudnessSafetyExtreme ?? false,
       };
@@ -64,11 +66,17 @@ function loadSettings(): SavedSettings {
     try {
       const raw = localStorage.getItem(legacyKey);
       if (raw) {
-        const parsed = JSON.parse(raw) as SavedSettings;
-        const migrated = {
-          ...parsed,
+        const parsed = JSON.parse(raw) as SavedSettings & {
+          powerLevel?: number;
+        };
+        const migrated: SavedSettings = {
+          volume: parsed.volume,
+          stabilizer: parsed.stabilizer,
           batteryReady: batteryReady || parsed.batteryReady,
-          powerLevel: parsed.powerLevel ?? 100,
+          dbBoost: parsed.dbBoost,
+          eqBands: parsed.eqBands,
+          enginesActive: parsed.enginesActive,
+          noiseGate: parsed.noiseGate,
           rockBassDrop: parsed.rockBassDrop ?? false,
           loudnessSafetyExtreme: parsed.loudnessSafetyExtreme ?? false,
         };
@@ -87,9 +95,6 @@ function loadSettings(): SavedSettings {
     eqBands: new Array(10).fill(0),
     enginesActive: [true, true, true, true],
     noiseGate: false,
-    freqHz: 440,
-    freqLevel: 50,
-    powerLevel: 100,
     rockBassDrop: false,
     loudnessSafetyExtreme: false,
   };
@@ -113,9 +118,6 @@ export default function App() {
   const [eqBands, setEqBands] = useState(saved.eqBands);
   const [enginesActive, setEnginesActive] = useState(saved.enginesActive);
   const [noiseGate, setNoiseGate] = useState(saved.noiseGate);
-  const [freqHz, setFreqHz] = useState(saved.freqHz);
-  const [freqLevel, setFreqLevel] = useState(saved.freqLevel);
-  const [powerLevel, setPowerLevel] = useState(saved.powerLevel ?? 100);
   const [rockBassDrop, setRockBassDrop] = useState(saved.rockBassDrop ?? false);
   const [loudnessSafetyExtreme, setLoudnessSafetyExtreme] = useState(
     saved.loudnessSafetyExtreme ?? false,
@@ -132,9 +134,6 @@ export default function App() {
       eqBands,
       enginesActive,
       noiseGate,
-      freqHz,
-      freqLevel,
-      powerLevel,
       rockBassDrop,
       loudnessSafetyExtreme,
     });
@@ -146,9 +145,6 @@ export default function App() {
     eqBands,
     enginesActive,
     noiseGate,
-    freqHz,
-    freqLevel,
-    powerLevel,
     rockBassDrop,
     loudnessSafetyExtreme,
   ]);
@@ -159,7 +155,7 @@ export default function App() {
     if (batteryReady) {
       audioEngine.setVolume(volume);
       audioEngine.setDBBoost(dbBoost);
-      audioEngine.setUserPowerLevel(powerLevel);
+      audioEngine.setUserPowerLevel(100);
       audioEngine.setRockBassDrop(rockBassDrop);
       audioEngine.setLoudnessSafetyExtreme(loudnessSafetyExtreme);
     }
@@ -172,7 +168,7 @@ export default function App() {
     } catch (_) {}
     audioEngine.setVolume(volume);
     audioEngine.setDBBoost(dbBoost);
-    audioEngine.setUserPowerLevel(powerLevel);
+    audioEngine.setUserPowerLevel(100);
     audioEngine.setRockBassDrop(rockBassDrop);
     audioEngine.setLoudnessSafetyExtreme(loudnessSafetyExtreme);
   };
@@ -212,19 +208,12 @@ export default function App() {
     audioEngine.setVolume(val);
   };
 
-  const handlePowerLevel = (level: number) => {
-    setPowerLevel(level);
-    audioEngine.setUserPowerLevel(level);
-  };
-
   const handleRockBassDrop = (on: boolean) => {
     setRockBassDrop(on);
-    // audioEngine call is made inside BrutusAmp directly
   };
 
   const handleLoudnessSafetyExtreme = (on: boolean) => {
     setLoudnessSafetyExtreme(on);
-    // audioEngine call is made inside BrutusAmp directly
   };
 
   const handleSave = () => {
@@ -236,9 +225,6 @@ export default function App() {
       eqBands,
       enginesActive,
       noiseGate,
-      freqHz,
-      freqLevel,
-      powerLevel,
       rockBassDrop,
       loudnessSafetyExtreme,
     });
@@ -297,10 +283,12 @@ export default function App() {
               onSave={handleSave}
               initialReady={batteryReady}
             />
+
+            {/* Power wires running from battery to amp */}
+            <PowerWires powered={batteryReady} />
+
             <BrutusAmp
               powered={batteryReady}
-              powerLevel={powerLevel}
-              onPowerLevel={handlePowerLevel}
               rockBassDrop={rockBassDrop}
               onRockBassDrop={handleRockBassDrop}
               loudnessSafetyExtreme={loudnessSafetyExtreme}
@@ -419,13 +407,9 @@ export default function App() {
             <FreqNoisePanel
               initialDbBoost={dbBoost}
               initialNoiseGate={noiseGate}
-              initialHz={freqHz}
-              initialFreqLevel={freqLevel}
               onSettingsChange={(s) => {
                 setDbBoost(s.dbBoost);
                 setNoiseGate(s.noiseGate);
-                setFreqHz(s.hz);
-                setFreqLevel(s.freqLevel);
               }}
             />
             <SoundMagnet />

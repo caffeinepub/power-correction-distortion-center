@@ -6,8 +6,6 @@ import { audioEngine } from "../audio/AudioEngine";
 interface FreqNoisePanelProps {
   initialDbBoost?: number;
   initialNoiseGate?: boolean;
-  initialHz?: number;
-  initialFreqLevel?: number;
   onSettingsChange?: (s: {
     dbBoost: number;
     noiseGate: boolean;
@@ -19,13 +17,8 @@ interface FreqNoisePanelProps {
 export function FreqNoisePanel({
   initialDbBoost = 0,
   initialNoiseGate = false,
-  initialHz = 440,
-  initialFreqLevel = 50,
   onSettingsChange,
 }: FreqNoisePanelProps) {
-  const [hz, setHz] = useState(initialHz);
-  const [freqLevel, setFreqLevel] = useState(initialFreqLevel);
-  const [freqActive, setFreqActive] = useState(false);
   const [noiseGate, setNoiseGate] = useState(initialNoiseGate);
   const [dbBoost, setDbBoost] = useState(initialDbBoost);
 
@@ -40,29 +33,10 @@ export function FreqNoisePanel({
     updates: Partial<{
       dbBoost: number;
       noiseGate: boolean;
-      hz: number;
-      freqLevel: number;
     }>,
   ) => {
-    const next = { dbBoost, noiseGate, hz, freqLevel, ...updates };
+    const next = { dbBoost, noiseGate, hz: 440, freqLevel: 50, ...updates };
     onSettingsChange?.(next);
-  };
-
-  const toggleFreq = (on: boolean) => {
-    setFreqActive(on);
-    audioEngine.setFreqGen(hz, freqLevel, on);
-  };
-
-  const updateHz = (val: number) => {
-    setHz(val);
-    if (freqActive) audioEngine.setFreqGen(val, freqLevel, true);
-    notify({ hz: val });
-  };
-
-  const updateLevel = (val: number) => {
-    setFreqLevel(val);
-    if (freqActive) audioEngine.setFreqGen(hz, val, true);
-    notify({ freqLevel: val });
   };
 
   const updateDbBoost = (val: number) => {
@@ -96,75 +70,7 @@ export function FreqNoisePanel({
         SIGNAL TOOLS
       </h3>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Frequency Generator */}
-        <div
-          className="rounded p-3 space-y-3"
-          style={{ background: "#0d1527", border: "1px solid #1e3a6e" }}
-        >
-          <div className="flex items-center justify-between">
-            <span
-              className="text-xs font-bold tracking-wider"
-              style={{ color: "#93c5fd" }}
-            >
-              FREQ GENERATOR
-            </span>
-            <Switch
-              data-ocid="freq.switch"
-              checked={freqActive}
-              onCheckedChange={toggleFreq}
-            />
-          </div>
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs font-mono">
-              <Label style={{ color: "#64748b", fontSize: "10px" }}>
-                FREQUENCY
-              </Label>
-              <span style={{ color: "#facc15" }}>
-                {hz >= 1000 ? `${(hz / 1000).toFixed(1)}kHz` : `${hz}Hz`}
-              </span>
-            </div>
-            <input
-              data-ocid="freq.input"
-              type="range"
-              min="20"
-              max="20000"
-              step="10"
-              value={hz}
-              onChange={(e) => updateHz(Number.parseInt(e.target.value))}
-              className="w-full"
-              style={{ accentColor: "#3b82f6" }}
-            />
-          </div>
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs font-mono">
-              <Label style={{ color: "#64748b", fontSize: "10px" }}>
-                LEVEL
-              </Label>
-              <span style={{ color: "#e2e8f0" }}>{freqLevel}%</span>
-            </div>
-            <input
-              data-ocid="freq.level.input"
-              type="range"
-              min="0"
-              max="100"
-              value={freqLevel}
-              onChange={(e) => updateLevel(Number.parseInt(e.target.value))}
-              className="w-full"
-              style={{ accentColor: "#3b82f6" }}
-            />
-          </div>
-          <div
-            className="text-xs text-center font-mono py-1 rounded"
-            style={{
-              background: freqActive ? "#14532d" : "#1c1917",
-              color: freqActive ? "#22c55e" : "#475569",
-            }}
-          >
-            {freqActive ? "GENERATING" : "STANDBY"}
-          </div>
-        </div>
-
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Noise Gate */}
         <div
           className="rounded p-3 space-y-3"
@@ -173,7 +79,7 @@ export function FreqNoisePanel({
           <div className="flex items-center justify-between">
             <span
               className="text-xs font-bold tracking-wider"
-              style={{ color: "#93c5fd" }}
+              style={{ color: "#3b82f6" }}
             >
               NOISE GATE
             </span>
@@ -187,24 +93,26 @@ export function FreqNoisePanel({
             <div
               className="w-12 h-12 rounded-full flex items-center justify-center"
               style={{
-                background: noiseGate ? "#14532d" : "#1c1917",
-                border: `2px solid ${noiseGate ? "#22c55e" : "#374151"}`,
-                boxShadow: noiseGate ? "0 0 15px rgba(34,197,94,0.25)" : "none",
+                background: noiseGate ? "#0d1b3e" : "#070e1f",
+                border: `2px solid ${noiseGate ? "#3b82f6" : "#1e3a6e"}`,
+                boxShadow: noiseGate
+                  ? "0 0 15px rgba(59,130,246,0.25)"
+                  : "none",
               }}
             >
               <span style={{ fontSize: "20px" }}>
-                {noiseGate ? "\uD83D\uDD07" : "\uD83D\uDD0A"}
+                {noiseGate ? "🔇" : "🔊"}
               </span>
             </div>
             <span
               className="text-xs font-mono"
-              style={{ color: noiseGate ? "#22c55e" : "#475569" }}
+              style={{ color: noiseGate ? "#3b82f6" : "#1e3a6e" }}
             >
               {noiseGate ? "BLOCKING NOISE" : "GATE OFF"}
             </span>
             <div
               className="text-xs font-mono text-center"
-              style={{ color: "#64748b" }}
+              style={{ color: "#1e40af" }}
             >
               <div>Threshold: -50dB</div>
               <div>Ratio: 20:1</div>
@@ -226,7 +134,7 @@ export function FreqNoisePanel({
             <span
               className="text-sm font-black tracking-wider"
               style={{
-                color: boostHigh ? "#ef4444" : "#93c5fd",
+                color: boostHigh ? "#ef4444" : "#3b82f6",
                 letterSpacing: "0.15em",
               }}
             >
@@ -265,7 +173,7 @@ export function FreqNoisePanel({
             </div>
             <div
               className="text-xs font-mono mt-1"
-              style={{ color: "#64748b" }}
+              style={{ color: "#1e40af" }}
             >
               GAIN
             </div>
@@ -273,7 +181,7 @@ export function FreqNoisePanel({
 
           <div className="space-y-2">
             <div className="flex justify-between text-xs font-mono">
-              <span style={{ color: "#64748b" }}>BOOST LEVEL</span>
+              <span style={{ color: "#1e40af" }}>BOOST LEVEL</span>
               <span style={{ color: boostHigh ? "#ef4444" : "#facc15" }}>
                 {dbBoost}%
               </span>
@@ -305,7 +213,7 @@ export function FreqNoisePanel({
                 }}
               />
             </div>
-            <div className="text-xs font-mono" style={{ color: "#64748b" }}>
+            <div className="text-xs font-mono" style={{ color: "#1e40af" }}>
               Gain: {gainValue.toFixed(2)}x | Crystal clear boost | 6x max
             </div>
           </div>

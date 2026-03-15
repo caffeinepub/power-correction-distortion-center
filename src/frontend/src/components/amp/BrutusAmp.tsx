@@ -3,8 +3,6 @@ import { AudioEngine, audioEngine } from "../../audio/AudioEngine";
 
 interface BrutusAmpProps {
   powered: boolean;
-  powerLevel?: number;
-  onPowerLevel?: (level: number) => void;
   rockBassDrop?: boolean;
   onRockBassDrop?: (on: boolean) => void;
   loudnessSafetyExtreme?: boolean;
@@ -13,27 +11,41 @@ interface BrutusAmpProps {
 
 export function BrutusAmp({
   powered,
-  powerLevel = 100,
-  onPowerLevel,
   rockBassDrop = false,
   onRockBassDrop,
   loudnessSafetyExtreme = false,
   onLoudnessSafetyExtreme,
 }: BrutusAmpProps) {
   const [headroomActive, setHeadroomActive] = useState(false);
+  const [autoPower, setAutoPower] = useState(100);
   const headroomTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoPowerTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Wire real ampGain node with power regulation
   useEffect(() => {
     audioEngine.setAmpPower(powered);
+    if (powered) {
+      audioEngine.setUserPowerLevel(100);
+    }
   }, [powered]);
 
-  // Apply user power level to the engine whenever it changes
+  // Auto-sense power from signal chain (no manual slider)
   useEffect(() => {
-    if (powered) {
-      audioEngine.setUserPowerLevel(powerLevel);
+    if (!powered) {
+      setAutoPower(0);
+      if (autoPowerTimer.current) clearInterval(autoPowerTimer.current);
+      return;
     }
-  }, [powered, powerLevel]);
+    setAutoPower(100);
+    autoPowerTimer.current = setInterval(() => {
+      const dbfs = audioEngine.getDBFS();
+      const level = Math.min(100, Math.max(0, ((dbfs + 60) / 60) * 100));
+      setAutoPower(Number.isFinite(level) ? level : 100);
+    }, 200);
+    return () => {
+      if (autoPowerTimer.current) clearInterval(autoPowerTimer.current);
+    };
+  }, [powered]);
 
   // Poll headroom indicator
   useEffect(() => {
@@ -64,7 +76,7 @@ export function BrutusAmp({
   };
 
   const wattsDelivered = Math.round(
-    (powerLevel / 100) * AudioEngine.POWER_WATTS,
+    (autoPower / 100) * AudioEngine.POWER_WATTS,
   );
   const spec = audioEngine.getPowerSpec();
 
@@ -112,7 +124,7 @@ export function BrutusAmp({
               boxShadow: "inset 0 2px 4px rgba(0,0,0,0.3)",
             }}
           >
-            BRUTUS
+            HBS
           </div>
           <span className="text-xs font-mono" style={{ color: "#6b7280" }}>
             SERIES
@@ -210,7 +222,7 @@ export function BrutusAmp({
             className="mt-3 text-xs font-mono"
             style={{ color: powered ? "#1d4ed8" : "#6b7280" }}
           >
-            60,000,000W SAFT | 0 GAUGE WIRE
+            60,000,000W SAFT
           </div>
 
           {/* Power spec */}
@@ -620,128 +632,28 @@ export function BrutusAmp({
         )}
       </div>
 
-      {/* ─── POWER SETTINGS SLIDER ─── */}
+      {/* Auto-sensor power info — replaces old 0-gauge wire bar */}
       <div
-        className="relative z-10 px-8 pb-4"
+        className="relative z-10 px-6 py-3"
         style={{
-          background: "linear-gradient(180deg, transparent, rgba(0,0,30,0.6))",
+          background: "linear-gradient(180deg, transparent, #0f172a)",
           borderTop: "1px solid #1e3a6e",
-          paddingTop: "12px",
         }}
       >
-        <div className="flex items-center justify-between mb-2">
-          <span
-            className="text-xs font-bold tracking-widest font-mono"
-            style={{ color: "#facc15" }}
+        <div
+          className="text-center text-xs font-mono font-bold tracking-widest"
+          style={{ color: powered ? "#3b82f6" : "#374151", fontSize: "9px" }}
+        >
+          AUTO-SENSOR REGULATED — 10,000W / 4CH / 9,000W HEADROOM
+        </div>
+        {powered && (
+          <div
+            className="mt-0.5 text-center text-xs font-mono"
+            style={{ color: "#93c5fd", fontSize: "9px" }}
           >
-            POWER SETTINGS
-          </span>
-          <div className="flex items-center gap-3">
-            <span
-              className="text-xs font-mono font-bold"
-              style={{
-                color:
-                  powerLevel > 80
-                    ? "#ef4444"
-                    : powerLevel > 50
-                      ? "#facc15"
-                      : "#3b82f6",
-              }}
-            >
-              {wattsDelivered.toLocaleString()}W
-            </span>
-            <span className="text-xs font-mono" style={{ color: "#475569" }}>
-              / {spec.totalWatts.toLocaleString()}W
-            </span>
+            {wattsDelivered.toLocaleString()}W DELIVERING
           </div>
-        </div>
-        <input
-          data-ocid="amp.input"
-          type="range"
-          min="0"
-          max="100"
-          step="1"
-          value={powerLevel}
-          onChange={(e) => onPowerLevel?.(Number(e.target.value))}
-          disabled={!powered}
-          className="w-full"
-          style={{
-            accentColor:
-              powerLevel > 80
-                ? "#ef4444"
-                : powerLevel > 50
-                  ? "#facc15"
-                  : "#3b82f6",
-            height: "10px",
-            opacity: powered ? 1 : 0.3,
-            cursor: powered ? "pointer" : "not-allowed",
-          }}
-        />
-        <div
-          className="flex justify-between text-xs font-mono mt-1"
-          style={{ color: "#374151" }}
-        >
-          <span>0W — SAFE</span>
-          <span style={{ color: "#3b82f6" }}>SAFT MODE</span>
-          <span style={{ color: "#ef4444" }}>MAX POWER</span>
-        </div>
-      </div>
-
-      {/* 0-gauge wire visual */}
-      <div
-        className="relative z-10 px-6 pb-4"
-        style={{ background: "linear-gradient(180deg, transparent, #0f172a)" }}
-      >
-        <div
-          className="text-xs font-mono mb-1 text-center"
-          style={{
-            color: powered ? "#6b7280" : "#374151",
-            letterSpacing: "0.12em",
-          }}
-        >
-          0 GAUGE WIRE
-        </div>
-        <div
-          style={{
-            height: "12px",
-            width: "100%",
-            background: "#1a1a1a",
-            border: "1px solid #374151",
-            borderRadius: "6px",
-            overflow: "hidden",
-            boxShadow: powered
-              ? loudnessSafetyExtreme
-                ? "0 0 14px rgba(239,68,68,0.6), 0 0 28px rgba(185,28,28,0.3)"
-                : "0 0 10px rgba(59,130,246,0.5), 0 0 20px rgba(29,78,216,0.2)"
-              : "none",
-            transition: "box-shadow 0.4s ease",
-            position: "relative",
-          }}
-        >
-          {powered && (
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                height: "100%",
-                width: loudnessSafetyExtreme ? "100%" : `${powerLevel}%`,
-                background: loudnessSafetyExtreme
-                  ? "linear-gradient(90deg, #1d4ed8, #ef4444, #dc2626)"
-                  : powerLevel > 80
-                    ? "linear-gradient(90deg, #1d4ed8, #ef4444)"
-                    : "linear-gradient(90deg, #1d4ed8, #3b82f6)",
-                borderRadius: "6px",
-                transition: "width 0.3s ease, background 0.3s ease",
-                boxShadow: loudnessSafetyExtreme
-                  ? "0 0 12px #ef4444"
-                  : powerLevel > 80
-                    ? "0 0 8px #ef4444"
-                    : "0 0 8px #3b82f6",
-              }}
-            />
-          )}
-        </div>
+        )}
       </div>
 
       {/* Status bar */}

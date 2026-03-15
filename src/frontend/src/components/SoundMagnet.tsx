@@ -3,23 +3,12 @@ import { Switch } from "@/components/ui/switch";
 import { useEffect, useRef, useState } from "react";
 import { AudioEngine, audioEngine } from "../audio/AudioEngine";
 
-const STORAGE_KEY_SPREAD = "pcdc_magnet_intensity";
-
-// Number of concentric field rings
 const RING_KEYS = ["r1", "r2", "r3", "r4", "r5", "r6"] as const;
 const RING_COUNT = RING_KEYS.length;
 
-function loadSpreadRange(): number {
-  try {
-    const v = localStorage.getItem(STORAGE_KEY_SPREAD);
-    if (v !== null) return Math.max(0, Math.min(100, Number(v)));
-  } catch (_) {}
-  return 80;
-}
+const ENV_RING_KEYS = ["e1", "e2", "e3"] as const;
 
-// Interpolate between blue and red based on fill level
 function fieldColor(fill: number, alpha: number): string {
-  // 0 = pure blue (#3b82f6), 1 = pure red (#ef4444)
   const r = Math.round(59 + fill * (239 - 59));
   const g = Math.round(130 + fill * (68 - 130));
   const b = Math.round(246 + fill * (68 - 246));
@@ -28,55 +17,70 @@ function fieldColor(fill: number, alpha: number): string {
 
 export function SoundMagnet() {
   const [bluetooth, setBluetooth] = useState(false);
-  const [spreadRange, setSpreadRange] = useState(loadSpreadRange);
-  // smoothT: 0..1, smoothed audio level for visuals
+  const spreadRange = 100;
   const [smoothT, setSmoothT] = useState(0);
+  const [lowFreqPower, setLowFreqPower] = useState(0);
+  const [midHighPower, setMidHighPower] = useState(0);
+  const [signalPower, setSignalPower] = useState(0);
+  const [autoPowerStatus, setAutoPowerStatus] = useState<string | null>(null);
 
-  const spreadRef = useRef(spreadRange / 100);
+  const spreadRef = useRef(1.0);
   const btRef = useRef(false);
   const smoothTRef = useRef(0);
+  const lowFreqRef = useRef(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoPowerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Keep refs in sync
   useEffect(() => {
     btRef.current = bluetooth;
   }, [bluetooth]);
 
-  useEffect(() => {
-    spreadRef.current = spreadRange / 100;
-    try {
-      localStorage.setItem(STORAGE_KEY_SPREAD, String(spreadRange));
-    } catch (_) {}
-    audioEngine.setSoundMagnetIntensity(spreadRange);
-  }, [spreadRange]);
-
-  // Poll audio level every 100ms — smooth expansion, not jittery
+  // Poll audio engine every 100ms — no microphone needed
   useEffect(() => {
     intervalRef.current = setInterval(() => {
-      const dbfs = audioEngine.getDBFS();
-      // Map -60..0 dBFS → 0..1
-      const raw = Math.max(0, Math.min(1, (dbfs + 60) / 60));
+      const sp = audioEngine.getSignalPower();
+      const lf = audioEngine.getLowFreqPower();
+      const mh = audioEngine.getMidHighPower();
 
-      // Smooth: fast attack (signal rising), slow decay (spreading lingers)
+      setSignalPower(sp);
+      setLowFreqPower(lf);
+      setMidHighPower(mh);
+
+      // Smooth the signal power for ring animation
       const prev = smoothTRef.current;
       const next =
-        raw > prev
-          ? prev + (raw - prev) * 0.35 // fast attack
-          : prev + (raw - prev) * 0.08; // slow decay — field lingers
+        sp > prev ? prev + (sp - prev) * 0.35 : prev + (sp - prev) * 0.08;
       smoothTRef.current = next;
       setSmoothT(next);
 
-      // Apply stereo mix gain — scales with audio level AND spread range
+      lowFreqRef.current = lf;
+
+      // Apply magnet gain
       const intNorm = spreadRef.current;
       const btBoost = btRef.current ? 1.0 : 0.75;
       const maxGain = 1.0 + intNorm * (AudioEngine.MAGNET_MAX_GAIN - 1.0);
       const gainTarget = 1.0 + (maxGain - 1.0) * next * btBoost;
       audioEngine.setSoundMagnetGain(gainTarget);
 
-      // Apply stereo mix widening — L/R channels pulled apart proportional to gain
-      audioEngine.setStereoMagnetWidth(
-        (gainTarget - 1.0) / (AudioEngine.MAGNET_MAX_GAIN - 1.0),
-      );
+      // Stereo width uses signal + low freq (room fill)
+      const combinedLevel =
+        ((gainTarget - 1.0) / (AudioEngine.MAGNET_MAX_GAIN - 1.0)) * 0.7 +
+        lf * 0.3;
+      audioEngine.setStereoMagnetWidth(Math.min(1, combinedLevel));
+
+      // Env room level driven by low freq content
+      audioEngine.setEnvironmentalRoomLevel(lf);
+
+      // Auto-amp-power trigger on low signal
+      if (sp < 0.1 && sp > 0.001) {
+        audioEngine.setUserPowerLevel(100);
+        setAutoPowerStatus("⚡ AMP POWER AUTO-APPLIED");
+        if (autoPowerTimerRef.current) clearTimeout(autoPowerTimerRef.current);
+        autoPowerTimerRef.current = setTimeout(() => {
+          setAutoPowerStatus(null);
+          autoPowerTimerRef.current = null;
+        }, 2500);
+      }
     }, 100);
 
     return () => {
@@ -84,15 +88,20 @@ export function SoundMagnet() {
     };
   }, []);
 
-  // Derived display values
-  const roomFillPct = Math.round(smoothT * spreadRange);
-  const isFullSpread = bluetooth && spreadRange >= 70 && smoothT > 0.55;
+  const isSensing = signalPower > 0.02;
   const isActive = smoothT > 0.05;
+  const isFullSpread = bluetooth && spreadRange >= 70 && smoothT > 0.55;
+  const isFullEnvBluetooth = bluetooth && isSensing && isActive;
 
-  // Field radius: the whole 280px circle is the room boundary
-  // At silence: rings clustered near center. At max: rings fill the 140px radius.
-  const FIELD_RADIUS = 140; // half of 280px container
+  const roomFillPct = Math.round(smoothT * spreadRange);
+  const envFillPct = Math.round(lowFreqPower * 100);
+
+  const FIELD_RADIUS = 140;
   const CORE_RADIUS = 10;
+
+  const sensorLabel = isSensing
+    ? "AUDIO SENSOR 2022 ● SENSING"
+    : "AUDIO SENSOR 2022 ○ STANDBY";
 
   return (
     <div
@@ -121,10 +130,26 @@ export function SoundMagnet() {
             letterSpacing: "0.15em",
           }}
         >
-          SOUND MAGNET
+          SOUND MAGNET ENVIRONMENTAL MIX
         </h3>
         <div className="flex items-center gap-2 flex-wrap">
-          {isFullSpread && (
+          {isFullEnvBluetooth && (
+            <div
+              className="px-3 py-1 rounded text-xs font-black tracking-widest"
+              style={{
+                background: "#7f1d1d",
+                color: "#fca5a5",
+                border: "1px solid #ef4444",
+                boxShadow: "0 0 10px rgba(239,68,68,0.5)",
+                animation: "btSpreadPulse 0.9s ease-in-out infinite",
+                letterSpacing: "0.1em",
+                fontSize: "10px",
+              }}
+            >
+              FULL ENVIRONMENTAL SPREAD — BLUETOOTH + SIGNAL ACTIVE
+            </div>
+          )}
+          {!isFullEnvBluetooth && isFullSpread && (
             <div
               className="px-3 py-1 rounded text-xs font-black tracking-widest"
               style={{
@@ -142,21 +167,30 @@ export function SoundMagnet() {
           <div
             className="px-3 py-1 rounded text-xs font-bold tracking-widest"
             style={{
-              background: isActive ? "#0d1b3e" : "#050d1a",
-              color: isActive ? "#3b82f6" : "#1e3a6e",
-              border: isActive ? "1px solid #3b82f6" : "1px solid #0f1e3d",
+              background: isSensing ? "#0d1b3e" : "#050d1a",
+              color: isSensing
+                ? isFullSpread
+                  ? "#ef4444"
+                  : "#3b82f6"
+                : "#1e3a6e",
+              border: isSensing
+                ? isFullSpread
+                  ? "1px solid #ef4444"
+                  : "1px solid #3b82f6"
+                : "1px solid #0f1e3d",
               transition: "all 0.4s ease",
               letterSpacing: "0.1em",
+              fontSize: "10px",
             }}
           >
-            ROOM SENSOR {isActive ? "● ACTIVE" : "○ STANDBY"}
+            {sensorLabel}
           </div>
         </div>
       </div>
 
       {/* ─── MAIN CONTENT ─── */}
       <div className="flex flex-col lg:flex-row items-center gap-0">
-        {/* ─── LARGE FIELD SENSOR DISPLAY ─── */}
+        {/* ─── FIELD SENSOR DISPLAY ─── */}
         <div
           className="flex items-center justify-center flex-shrink-0"
           style={{
@@ -165,16 +199,11 @@ export function SoundMagnet() {
             padding: "32px 32px",
           }}
         >
-          {/* 280×280 field container */}
           <div
             className="relative flex items-center justify-center"
-            style={{
-              width: "280px",
-              height: "280px",
-              flexShrink: 0,
-            }}
+            style={{ width: "280px", height: "280px", flexShrink: 0 }}
           >
-            {/* Outer boundary ring — the room wall */}
+            {/* Outer boundary ring */}
             <div
               className="absolute rounded-full"
               style={{
@@ -185,12 +214,61 @@ export function SoundMagnet() {
               }}
             />
 
-            {/* Concentric field rings — expand outward as volume rises */}
+            {/* ATMOSPHERE ring (dashed, outermost) — always visible when sensing */}
+            {isSensing && (
+              <div
+                className="absolute rounded-full"
+                style={{
+                  width: "270px",
+                  height: "270px",
+                  border: `1.5px dashed rgba(239,68,68,${0.15 + lowFreqPower * 0.45})`,
+                  boxShadow:
+                    lowFreqPower > 0.3
+                      ? `0 0 ${8 + lowFreqPower * 20}px rgba(239,68,68,${lowFreqPower * 0.3})`
+                      : "none",
+                  transition: "border-color 0.3s ease, box-shadow 0.3s ease",
+                  animation:
+                    lowFreqPower > 0.1
+                      ? "envPulse 2s ease-in-out infinite"
+                      : "none",
+                }}
+              />
+            )}
+
+            {/* ENV OUTER RINGS (red, dashed) — bass/room boundary */}
+            {isSensing &&
+              ENV_RING_KEYS.map((key, idx) => {
+                const envFraction = (idx + 1) / ENV_RING_KEYS.length;
+                const envRadius =
+                  CORE_RADIUS +
+                  (FIELD_RADIUS - CORE_RADIUS) * (0.45 + envFraction * 0.45);
+                const envDiameter = envRadius * 2;
+                const envAlpha =
+                  (0.25 - idx * 0.06) * (0.2 + lowFreqPower * 0.8);
+                const envGlow = 3 + idx * 4 + lowFreqPower * 12;
+
+                return (
+                  <div
+                    key={key}
+                    className="absolute rounded-full"
+                    style={{
+                      width: `${envDiameter}px`,
+                      height: `${envDiameter}px`,
+                      border: `1px dashed rgba(239,68,68,${envAlpha})`,
+                      boxShadow:
+                        lowFreqPower > 0.15
+                          ? `0 0 ${envGlow}px rgba(239,68,68,${envAlpha * 0.8})`
+                          : "none",
+                      transition:
+                        "width 0.3s ease, height 0.3s ease, border-color 0.3s ease, box-shadow 0.4s ease",
+                    }}
+                  />
+                );
+              })}
+
+            {/* INNER RINGS (blue) — music signal expanding outward */}
             {RING_KEYS.map((ringKey, idx) => {
-              // Each ring expands to a different fraction of the field radius
-              // Ring 0 = innermost (smallest), Ring N-1 = outermost (room boundary)
-              const ringFraction = (idx + 1) / RING_COUNT; // 1/6, 2/6 ... 6/6
-              // The ring is "active" when smoothT exceeds its threshold
+              const ringFraction = (idx + 1) / RING_COUNT;
               const threshold = ringFraction * 0.85;
               const ringActivation = Math.max(
                 0,
@@ -199,7 +277,6 @@ export function SoundMagnet() {
                   (smoothT - threshold * 0.1) / (1 - threshold * 0.1 + 0.001),
                 ),
               );
-              // Effective spread controlled by spreadRange
               const spread = spreadRef.current;
               const maxRingRadius =
                 CORE_RADIUS +
@@ -209,7 +286,6 @@ export function SoundMagnet() {
                 minRingRadius + (maxRingRadius - minRingRadius) * smoothT;
               const diameter = Math.max(CORE_RADIUS * 2, currentRadius * 2);
 
-              // Color: blue at inner rings, shift toward red at outer rings when loud
               const colorShift = ringFraction * smoothT;
               const ringOpacity = Math.max(
                 0,
@@ -232,7 +308,6 @@ export function SoundMagnet() {
                     height: `${diameter}px`,
                     border: `${borderWidth}px solid ${color}`,
                     boxShadow: `0 0 ${glowPx}px ${glowColor}`,
-                    // CSS transition for smooth movement — not jittery
                     transition:
                       "width 0.18s ease-out, height 0.18s ease-out, border-color 0.3s ease, box-shadow 0.3s ease",
                   }}
@@ -240,7 +315,7 @@ export function SoundMagnet() {
               );
             })}
 
-            {/* Central orb — the magnet source */}
+            {/* Central orb */}
             <div
               className="absolute rounded-full"
               style={{
@@ -257,7 +332,7 @@ export function SoundMagnet() {
               }}
             />
 
-            {/* Hard center dot */}
+            {/* Center dot */}
             <div
               className="relative z-10 rounded-full"
               style={{
@@ -271,7 +346,7 @@ export function SoundMagnet() {
               }}
             />
 
-            {/* Room fill % label centered below dot */}
+            {/* Fill label */}
             <div
               className="absolute"
               style={{
@@ -298,12 +373,13 @@ export function SoundMagnet() {
               <div
                 className="text-xs font-mono"
                 style={{
-                  color: "#1e3a6e",
+                  color: isSensing ? "#ef4444" : "#1e3a6e",
                   fontSize: "9px",
                   letterSpacing: "0.1em",
+                  transition: "color 0.3s ease",
                 }}
               >
-                ROOM FILL
+                {isSensing ? "ENV FILL" : "ROOM FILL"}
               </div>
             </div>
           </div>
@@ -318,6 +394,139 @@ export function SoundMagnet() {
             width: "100%",
           }}
         >
+          {/* ─── LIVE READOUTS ─── */}
+          <div
+            className="rounded px-4 py-3 space-y-2"
+            style={{
+              background: "#050d1a",
+              border: isSensing ? "1px solid #3b82f6" : "1px solid #0f1e3d",
+              transition: "border-color 0.4s ease",
+            }}
+          >
+            <div
+              className="text-xs font-black font-mono tracking-widest"
+              style={{
+                color: "#facc15",
+                letterSpacing: "0.14em",
+                fontSize: "10px",
+              }}
+            >
+              AUDIO SENSOR 2022 ● LIVE READINGS
+            </div>
+
+            {/* Signal Power */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span
+                  className="text-xs font-mono"
+                  style={{ color: "#3b82f6", fontSize: "10px" }}
+                >
+                  SIGNAL POWER
+                </span>
+                <span
+                  className="text-xs font-mono font-bold"
+                  style={{ color: signalPower > 0.6 ? "#ef4444" : "#3b82f6" }}
+                >
+                  {Math.round(signalPower * 100)}%
+                </span>
+              </div>
+              <div
+                className="rounded-full overflow-hidden"
+                style={{
+                  height: "6px",
+                  background: "#050d1a",
+                  border: "1px solid #0f1e3d",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${Math.round(signalPower * 100)}%`,
+                    background:
+                      signalPower > 0.6
+                        ? "linear-gradient(90deg, #1d4ed8, #ef4444)"
+                        : "linear-gradient(90deg, #1e3a6e, #3b82f6)",
+                    borderRadius: "9999px",
+                    transition: "width 0.15s ease",
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Low Freq ENV */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span
+                  className="text-xs font-mono"
+                  style={{ color: "#ef4444", fontSize: "10px" }}
+                >
+                  LOW FREQ ENV
+                </span>
+                <span
+                  className="text-xs font-mono font-bold"
+                  style={{ color: "#ef4444" }}
+                >
+                  {Math.round(lowFreqPower * 100)}%
+                </span>
+              </div>
+              <div
+                className="rounded-full overflow-hidden"
+                style={{
+                  height: "6px",
+                  background: "#050d1a",
+                  border: "1px solid #3b0000",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${Math.round(lowFreqPower * 100)}%`,
+                    background: "linear-gradient(90deg, #7f1d1d, #ef4444)",
+                    borderRadius: "9999px",
+                    transition: "width 0.15s ease",
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Presence */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span
+                  className="text-xs font-mono"
+                  style={{ color: "#1d4ed8", fontSize: "10px" }}
+                >
+                  PRESENCE
+                </span>
+                <span
+                  className="text-xs font-mono font-bold"
+                  style={{ color: midHighPower > 0.5 ? "#3b82f6" : "#1d4ed8" }}
+                >
+                  {Math.round(midHighPower * 100)}%
+                </span>
+              </div>
+              <div
+                className="rounded-full overflow-hidden"
+                style={{
+                  height: "6px",
+                  background: "#050d1a",
+                  border: "1px solid #1e3a6e",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${Math.round(midHighPower * 100)}%`,
+                    background:
+                      "linear-gradient(90deg, #1e3a6e, #1d4ed8, #3b82f6)",
+                    borderRadius: "9999px",
+                    transition: "width 0.15s ease",
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Bluetooth toggle */}
           <div className="flex items-center gap-3">
             <Switch
@@ -325,7 +534,7 @@ export function SoundMagnet() {
               checked={bluetooth}
               onCheckedChange={setBluetooth}
             />
-            <Label style={{ color: bluetooth ? "#3b82f6" : "#475569" }}>
+            <Label style={{ color: bluetooth ? "#3b82f6" : "#1e3a6e" }}>
               Bluetooth:{" "}
               <span
                 style={{
@@ -338,65 +547,13 @@ export function SoundMagnet() {
             </Label>
           </div>
 
-          {/* Spread range slider */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span
-                className="text-xs font-black font-mono tracking-widest"
-                style={{ color: "#facc15", letterSpacing: "0.12em" }}
-              >
-                SPREAD RANGE
-              </span>
-              <span
-                className="text-xs font-mono font-bold"
-                style={{
-                  color:
-                    spreadRange > 80
-                      ? "#ef4444"
-                      : spreadRange > 50
-                        ? "#3b82f6"
-                        : "#475569",
-                }}
-              >
-                {spreadRange}%
-              </span>
-            </div>
-            <input
-              data-ocid="magnet.input"
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-              value={spreadRange}
-              onChange={(e) => setSpreadRange(Number(e.target.value))}
-              className="w-full"
-              style={{
-                accentColor:
-                  spreadRange > 80
-                    ? "#ef4444"
-                    : spreadRange > 50
-                      ? "#3b82f6"
-                      : "#1e3a6e",
-                height: "8px",
-              }}
-            />
-            <div
-              className="flex justify-between text-xs font-mono"
-              style={{ color: "#1e3a6e" }}
-            >
-              <span>NARROW</span>
-              <span style={{ color: "#3b82f6" }}>WIDE</span>
-              <span style={{ color: "#ef4444" }}>FULL ROOM</span>
-            </div>
-          </div>
-
           {/* Room sensor fill bar */}
           <div className="space-y-1">
             <div
               className="text-xs font-mono font-bold tracking-widest"
-              style={{ color: "#475569", letterSpacing: "0.1em" }}
+              style={{ color: "#1e40af", letterSpacing: "0.1em" }}
             >
-              ROOM SENSOR
+              AUDIO SENSOR 2022
             </div>
             <div
               className="rounded-full overflow-hidden"
@@ -421,19 +578,78 @@ export function SoundMagnet() {
                 }}
               />
             </div>
-            <div
-              className="flex justify-between text-xs font-mono"
-              style={{ color: "#1e3a6e", fontSize: "9px" }}
-            >
-              <span>SILENCE</span>
-              <span>
-                {Math.round(smoothT * 100)}% audio • {roomFillPct}% room fill
-              </span>
-              <span>FULL ROOM</span>
-            </div>
           </div>
 
-          {/* Status info */}
+          {/* ENV level bar */}
+          {isSensing && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <div
+                  className="text-xs font-mono font-bold tracking-widest"
+                  style={{ color: "#ef4444", letterSpacing: "0.1em" }}
+                >
+                  ENV LEVEL
+                </div>
+                <div
+                  className="text-xs font-mono font-bold"
+                  style={{ color: "#ef4444" }}
+                >
+                  {envFillPct}%
+                </div>
+              </div>
+              <div
+                className="rounded-full overflow-hidden"
+                style={{
+                  height: "8px",
+                  background: "#050d1a",
+                  border: "1px solid #3b0000",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${envFillPct}%`,
+                    background: "linear-gradient(90deg, #7f1d1d, #ef4444)",
+                    borderRadius: "9999px",
+                    boxShadow:
+                      lowFreqPower > 0.1
+                        ? `0 0 ${4 + lowFreqPower * 10}px rgba(239,68,68,0.6)`
+                        : "none",
+                    transition: "width 0.15s ease, box-shadow 0.3s ease",
+                  }}
+                />
+              </div>
+              <div
+                className="text-xs font-mono"
+                style={{
+                  color: "#7f1d1d",
+                  fontSize: "9px",
+                  letterSpacing: "0.08em",
+                }}
+              >
+                LOW FREQ ENVIRONMENT FILL
+              </div>
+            </div>
+          )}
+
+          {/* Auto power status */}
+          {autoPowerStatus && (
+            <div
+              className="py-2 px-3 rounded text-xs font-black font-mono text-center tracking-widest"
+              style={{
+                background: "#1a0000",
+                border: "1px solid #ef4444",
+                color: "#facc15",
+                boxShadow: "0 0 10px rgba(239,68,68,0.4)",
+                letterSpacing: "0.12em",
+                animation: "btSpreadPulse 0.6s ease-in-out infinite",
+              }}
+            >
+              {autoPowerStatus}
+            </div>
+          )}
+
+          {/* Status info box */}
           <div
             className="rounded px-4 py-3 space-y-1.5 text-xs font-mono"
             style={{
@@ -442,20 +658,38 @@ export function SoundMagnet() {
               transition: "border-color 0.4s ease",
             }}
           >
-            <div style={{ color: "#1e3a6e", letterSpacing: "0.1em" }}>
-              VIRTUAL SOUND MAGNET
+            <div
+              style={{
+                color: "#facc15",
+                letterSpacing: "0.12em",
+                fontWeight: "900",
+                fontSize: "10px",
+              }}
+            >
+              AUDIO SENSOR 2022 — THE SMART SENSOR
             </div>
             <div style={{ color: "#3b82f6" }}>
-              ▸ Expands with music — fills the room as volume rises
+              ▸ Reads live audio signal — no microphone needed
             </div>
             <div style={{ color: "#3b82f6" }}>
-              ▸ Adapts to room acoustics via sensor
+              ▸ Senses frequency power, bass content, and presence
             </div>
-            <div style={{ color: bluetooth ? "#3b82f6" : "#374151" }}>
-              {bluetooth
-                ? "● Bluetooth: full stereo mix spread active"
-                : "○ Connect Bluetooth for maximum spread"}
+            <div style={{ color: "#3b82f6" }}>
+              ▸ Music expands through the air — becomes the atmosphere
             </div>
+            <div style={{ color: bluetooth ? "#3b82f6" : "#1e40af" }}>
+              ▸ Reaches maximum environmental potential on Bluetooth
+            </div>
+            {isSensing && (
+              <div
+                style={{
+                  color: envFillPct > 50 ? "#ef4444" : "#1e40af",
+                  transition: "color 0.3s ease",
+                }}
+              >
+                ENV LEVEL: {envFillPct}%
+              </div>
+            )}
             <div
               style={{
                 color:
@@ -463,7 +697,7 @@ export function SoundMagnet() {
                     ? "#ef4444"
                     : spreadRange >= 50
                       ? "#3b82f6"
-                      : "#374151",
+                      : "#1e40af",
               }}
             >
               Spread:{" "}
@@ -495,6 +729,10 @@ export function SoundMagnet() {
           @keyframes btSpreadPulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.45; }
+          }
+          @keyframes envPulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(0.985); }
           }
         `}
       </style>

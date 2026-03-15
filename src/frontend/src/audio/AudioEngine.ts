@@ -46,16 +46,22 @@ export class AudioEngine {
   // ─────────────────────────────────────────────────────────────────────────
 
   // ─── SOUND MAGNET ──────────────────────────────────────────────────────────
-  // Stereo mix magnet: gentle room-filling sound spread, max 1.4x (40%)
-  static readonly MAGNET_MAX_GAIN = 1.4;
+  // Stereo mix magnet: gentle room-filling sound spread, max 1.7x (70%)
+  static readonly MAGNET_MAX_GAIN = 1.7;
   private _magnetIntensity = 0.8; // 0.0–1.0, maps from 0-100 slider
 
   // Stereo mix widening nodes: ChannelSplitter + L/R gain + ChannelMerger
-  // Pulls left and right channels apart as magnet level rises (max ±0.15)
+  // Pulls left and right channels apart as magnet level rises (max ±0.30)
   private stereoSplitter: ChannelSplitterNode | null = null;
   private stereoMerger: ChannelMergerNode | null = null;
   private stereoLeftGain: GainNode | null = null;
   private stereoRightGain: GainNode | null = null;
+
+  // ─── ENVIRONMENTAL ROOM EXPANSION ──────────────────────────────────────
+  private envDelayNode: DelayNode | null = null;
+  private envFeedbackGain: GainNode | null = null;
+  private envWetGain: GainNode | null = null;
+  private _envRoomLevel = 0;
   // ─────────────────────────────────────────────────────────────────────────
 
   static readonly COMMANDER = 1_953_000_000;
@@ -118,14 +124,22 @@ export class AudioEngine {
     this.ampGain.gain.value = 0;
 
     // ─── STEREO MIX MAGNET WIDENER ───────────────────────────────────────
-    // Split left/right, apply small gain difference, merge back.
-    // This pulls the stereo field apart as the magnet level rises.
     this.stereoSplitter = ctx.createChannelSplitter(2);
     this.stereoMerger = ctx.createChannelMerger(2);
     this.stereoLeftGain = ctx.createGain();
     this.stereoLeftGain.gain.value = 1.0;
     this.stereoRightGain = ctx.createGain();
     this.stereoRightGain.gain.value = 1.0;
+    // ─────────────────────────────────────────────────────────────────────
+
+    // ─── ENVIRONMENTAL ROOM EXPANSION NODES ──────────────────────────────
+    // Parallel delay path after soundMagnetGain, merged before clarityFilter
+    this.envDelayNode = ctx.createDelay(0.5);
+    this.envDelayNode.delayTime.value = 0.02;
+    this.envFeedbackGain = ctx.createGain();
+    this.envFeedbackGain.gain.value = 0;
+    this.envWetGain = ctx.createGain();
+    this.envWetGain.gain.value = 0;
     // ─────────────────────────────────────────────────────────────────────
 
     this.engineGains = AudioEngine.ENGINE_GAINS.map((g) => {
@@ -213,14 +227,24 @@ export class AudioEngine {
 
     // ─── Stereo mix magnet: noiseGate → splitter → L/R gains → merger → soundMagnetGain
     this.noiseGateNode!.connect(this.stereoSplitter!);
-    this.stereoSplitter!.connect(this.stereoLeftGain!, 0); // output ch0 (L) → leftGain
-    this.stereoSplitter!.connect(this.stereoRightGain!, 1); // output ch1 (R) → rightGain
-    this.stereoLeftGain!.connect(this.stereoMerger!, 0, 0); // leftGain → merger input 0 (L)
-    this.stereoRightGain!.connect(this.stereoMerger!, 0, 1); // rightGain → merger input 1 (R)
+    this.stereoSplitter!.connect(this.stereoLeftGain!, 0);
+    this.stereoSplitter!.connect(this.stereoRightGain!, 1);
+    this.stereoLeftGain!.connect(this.stereoMerger!, 0, 0);
+    this.stereoRightGain!.connect(this.stereoMerger!, 0, 1);
     this.stereoMerger!.connect(this.soundMagnetGain!);
     // ─────────────────────────────────────────────────────────────────────
 
+    // ─── Environmental room expansion: parallel delay path ────────────────
+    // soundMagnetGain → delay → feedback loop (delay → feedbackGain → delay)
+    // soundMagnetGain → envWetGain → clarityFilter (parallel wet mix)
+    this.soundMagnetGain!.connect(this.envDelayNode!);
+    this.envDelayNode!.connect(this.envFeedbackGain!);
+    this.envFeedbackGain!.connect(this.envDelayNode!); // feedback loop
+    this.envDelayNode!.connect(this.envWetGain!);
+    // ─────────────────────────────────────────────────────────────────────
+
     this.soundMagnetGain!.connect(this.clarityFilter!);
+    this.envWetGain!.connect(this.clarityFilter!); // wet mix merges here
     this.clarityFilter!.connect(this.ampGain!);
     this.ampGain!.connect(this.dbBoostGain!);
     this.dbBoostGain!.connect(this.commanderNode!);
@@ -443,22 +467,11 @@ export class AudioEngine {
 
   // ─── SOUND MAGNET ──────────────────────────────────────────────────────────
 
-  /**
-   * Stereo mix gain — room-filling sound spread.
-   * Called from the polling loop in SoundMagnet every 100ms.
-   * Max MAGNET_MAX_GAIN (1.4x).
-   */
   setSoundMagnetGain(value: number) {
     this.ensureContext();
     if (this.soundMagnetGain) this.soundMagnetGain.gain.value = value;
   }
 
-  /**
-   * Set spread range from the UI slider (0–100).
-   * Maps 0 → 1.0 (no sound spread), 100 → MAGNET_MAX_GAIN (1.4x, full spread).
-   * Smooth linearRamp over 0.05s. Does NOT touch clarityFilter — that belongs
-   * to the clarity/presence system, not the stereo mix magnet.
-   */
   setSoundMagnetIntensity(level: number) {
     this.ensureContext();
     if (!this.context || !this.soundMagnetGain) return;
@@ -476,16 +489,51 @@ export class AudioEngine {
 
   /**
    * Stereo mix magnet width — pulls L/R channels apart.
-   * level: 0.0 (no effect) → 1.0 (full stereo mix spread, max ±0.15 gain diff).
-   * Left channel gets +width, right channel gets -width.
-   * At max level the stereo field is noticeably wider.
+   * level: 0.0 (no effect) → 1.0 (full stereo mix spread, max ±0.30 gain diff).
    */
   setStereoMagnetWidth(level: number) {
     this.ensureContext();
     if (!this.stereoLeftGain || !this.stereoRightGain) return;
-    const width = Math.max(0, Math.min(1, level)) * 0.15;
+    const width = Math.max(0, Math.min(1, level)) * 0.3;
     this.stereoLeftGain.gain.value = 1.0 + width;
     this.stereoRightGain.gain.value = 1.0 - width;
+  }
+
+  /**
+   * Environmental Room Level — applies subtle delay-based room expansion.
+   * level: 0-1. Higher = bigger room simulation (longer delay, more feedback, wetter mix).
+   * Works in parallel with the main signal — clean signal is never chopped.
+   */
+  setEnvironmentalRoomLevel(level: number) {
+    this.ensureContext();
+    const l = Math.max(0, Math.min(1, level));
+    this._envRoomLevel = l;
+
+    if (this.envDelayNode) {
+      // Delay time: 0.02s (small room) → 0.08s (large room)
+      this.envDelayNode.delayTime.value = 0.02 + l * 0.06;
+    }
+    if (this.envFeedbackGain) {
+      // Feedback: 0 (none) → 0.25 (subtle reverb tail)
+      this.envFeedbackGain.gain.value = l * 0.25;
+    }
+    if (this.envWetGain) {
+      // Wet mix: 0 (silent) → 0.3 (30% environmental blend)
+      this.envWetGain.gain.value = l * 0.3;
+    }
+
+    // Also widen stereo further based on room level
+    const extraWidth = l * 0.2;
+    if (this.stereoLeftGain && this.stereoRightGain) {
+      const currentWidth = this.stereoLeftGain.gain.value - 1.0;
+      const combined = Math.min(0.3, currentWidth + extraWidth);
+      this.stereoLeftGain.gain.value = 1.0 + combined;
+      this.stereoRightGain.gain.value = 1.0 - combined;
+    }
+  }
+
+  getEnvironmentalRoomLevel() {
+    return this._envRoomLevel;
   }
 
   getMagnetIntensity() {
@@ -510,28 +558,10 @@ export class AudioEngine {
     if (this.noiseGateNode) this.noiseGateNode.threshold.value = on ? -50 : 0;
   }
 
-  setFreqGen(hz: number, level: number, active: boolean) {
-    this.ensureContext();
-    if (!active) {
-      if (this.oscillator) {
-        try {
-          this.oscillator.stop();
-        } catch (_) {}
-        this.oscillator = null;
-      }
-      if (this.oscGain) this.oscGain.gain.value = 0;
-      return;
-    }
-    if (!this.oscillator) {
-      this.oscillator = this.context!.createOscillator();
-      this.oscillator.type = "sine";
-      this.oscillator.frequency.value = hz;
-      this.oscillator.connect(this.oscGain!);
-      this.oscillator.start();
-    } else {
-      this.oscillator.frequency.value = hz;
-    }
-    if (this.oscGain) this.oscGain.gain.value = level / 100;
+  // No-op: Frequency generator removed from UI
+  // Kept for compatibility in case any code still calls it
+  setFreqGen(_hz: number, _level: number, _active: boolean) {
+    // intentional no-op
   }
 
   getDBFS(): number {
@@ -543,6 +573,60 @@ export class AudioEngine {
     const rms = Math.sqrt(sum / buf.length);
     if (rms === 0) return -100;
     return 20 * Math.log10(rms);
+  }
+
+  getFrequencySpectrum(): Float32Array {
+    if (!this.analyser) return new Float32Array(0);
+    const buf = new Float32Array(this.analyser.frequencyBinCount);
+    this.analyser.getFloatFrequencyData(buf);
+    return buf;
+  }
+
+  getSignalPower(): number {
+    const dbfs = this.getDBFS();
+    // Map -60..0 dBFS to 0..1
+    return Math.max(0, Math.min(1, (dbfs + 60) / 60));
+  }
+
+  getLowFreqPower(): number {
+    if (!this.analyser) return 0;
+    const ctx = this.context;
+    if (!ctx) return 0;
+    const buf = new Float32Array(this.analyser.frequencyBinCount);
+    this.analyser.getFloatFrequencyData(buf);
+    const sampleRate = ctx.sampleRate;
+    const binHz = sampleRate / this.analyser.fftSize;
+    const lowBin = Math.round(20 / binHz);
+    const highBin = Math.round(200 / binHz);
+    let sum = 0;
+    let count = 0;
+    for (let i = lowBin; i <= Math.min(highBin, buf.length - 1); i++) {
+      // buf values are dBFS (-Infinity..0), clamp to -80..0
+      const v = Math.max(-80, buf[i]);
+      sum += (v + 80) / 80;
+      count++;
+    }
+    return count > 0 ? Math.min(1, sum / count) : 0;
+  }
+
+  getMidHighPower(): number {
+    if (!this.analyser) return 0;
+    const ctx = this.context;
+    if (!ctx) return 0;
+    const buf = new Float32Array(this.analyser.frequencyBinCount);
+    this.analyser.getFloatFrequencyData(buf);
+    const sampleRate = ctx.sampleRate;
+    const binHz = sampleRate / this.analyser.fftSize;
+    const lowBin = Math.round(1000 / binHz);
+    const highBin = Math.round(16000 / binHz);
+    let sum = 0;
+    let count = 0;
+    for (let i = lowBin; i <= Math.min(highBin, buf.length - 1); i++) {
+      const v = Math.max(-80, buf[i]);
+      sum += (v + 80) / 80;
+      count++;
+    }
+    return count > 0 ? Math.min(1, sum / count) : 0;
   }
 
   setSoundMagnetGainLegacy(value: number) {
