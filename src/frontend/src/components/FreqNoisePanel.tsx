@@ -77,7 +77,7 @@ export function FreqNoisePanel({
     notify({ noiseGate: on });
   };
 
-  const gainValue = 1.0 + (dbBoost / 100) * 2.0;
+  const gainValue = 1.0 + (dbBoost / 100) * 5.0;
   const boostHigh = dbBoost > 50;
 
   return (
@@ -306,7 +306,7 @@ export function FreqNoisePanel({
               />
             </div>
             <div className="text-xs font-mono" style={{ color: "#64748b" }}>
-              Gain: {gainValue.toFixed(2)}x | Super clear clean boost | 3x max
+              Gain: {gainValue.toFixed(2)}x | Crystal clear boost | 6x max
             </div>
           </div>
         </div>

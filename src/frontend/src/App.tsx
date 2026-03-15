@@ -8,12 +8,22 @@ import { CorrectionPanel } from "./components/CorrectionPanel";
 import { DbMeter } from "./components/DbMeter";
 import { Equalizer } from "./components/Equalizer";
 import { FreqNoisePanel } from "./components/FreqNoisePanel";
+import { KickDrum } from "./components/KickDrum";
 import { SoundEngines } from "./components/SoundEngines";
 import { SoundMagnet } from "./components/SoundMagnet";
 import { BrutusAmp } from "./components/amp/BrutusAmp";
 import { MackieMixer } from "./components/mixer/MackieMixer";
 
-const STORAGE_KEY = "pcdc_settings_v3";
+// Stable key -- never change this so saves persist forever
+const STORAGE_KEY = "pcdc_settings";
+// Dedicated battery key -- separate so it never gets wiped by a key change
+const BATTERY_KEY = "pcdc_battery_ready";
+// Legacy keys to migrate from older versions
+const LEGACY_KEYS = [
+  "pcdc_settings_v3",
+  "pcdc_settings_v2",
+  "pcdc_settings_v1",
+];
 
 interface SavedSettings {
   volume: number;
@@ -25,29 +35,70 @@ interface SavedSettings {
   noiseGate: boolean;
   freqHz: number;
   freqLevel: number;
+  powerLevel: number;
+  rockBassDrop: boolean;
+  loudnessSafetyExtreme: boolean;
 }
 
 function loadSettings(): SavedSettings {
+  let batteryReady = false;
+  try {
+    batteryReady = localStorage.getItem(BATTERY_KEY) === "1";
+  } catch (_) {}
+
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as SavedSettings;
+    if (raw) {
+      const parsed = JSON.parse(raw) as SavedSettings;
+      return {
+        ...parsed,
+        batteryReady: batteryReady || parsed.batteryReady,
+        powerLevel: parsed.powerLevel ?? 100,
+        rockBassDrop: parsed.rockBassDrop ?? false,
+        loudnessSafetyExtreme: parsed.loudnessSafetyExtreme ?? false,
+      };
+    }
   } catch (_) {}
+
+  for (const legacyKey of LEGACY_KEYS) {
+    try {
+      const raw = localStorage.getItem(legacyKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as SavedSettings;
+        const migrated = {
+          ...parsed,
+          batteryReady: batteryReady || parsed.batteryReady,
+          powerLevel: parsed.powerLevel ?? 100,
+          rockBassDrop: parsed.rockBassDrop ?? false,
+          loudnessSafetyExtreme: parsed.loudnessSafetyExtreme ?? false,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+        localStorage.removeItem(legacyKey);
+        return migrated;
+      }
+    } catch (_) {}
+  }
+
   return {
     volume: 50,
     stabilizer: false,
-    batteryReady: false,
+    batteryReady,
     dbBoost: 0,
     eqBands: new Array(10).fill(0),
     enginesActive: [true, true, true, true],
     noiseGate: false,
     freqHz: 440,
     freqLevel: 50,
+    powerLevel: 100,
+    rockBassDrop: false,
+    loudnessSafetyExtreme: false,
   };
 }
 
 function saveSettings(s: SavedSettings) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    if (s.batteryReady) localStorage.setItem(BATTERY_KEY, "1");
   } catch (_) {}
 }
 
@@ -64,6 +115,11 @@ export default function App() {
   const [noiseGate, setNoiseGate] = useState(saved.noiseGate);
   const [freqHz, setFreqHz] = useState(saved.freqHz);
   const [freqLevel, setFreqLevel] = useState(saved.freqLevel);
+  const [powerLevel, setPowerLevel] = useState(saved.powerLevel ?? 100);
+  const [rockBassDrop, setRockBassDrop] = useState(saved.rockBassDrop ?? false);
+  const [loudnessSafetyExtreme, setLoudnessSafetyExtreme] = useState(
+    saved.loudnessSafetyExtreme ?? false,
+  );
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Auto-save whenever key state changes
@@ -78,6 +134,9 @@ export default function App() {
       noiseGate,
       freqHz,
       freqLevel,
+      powerLevel,
+      rockBassDrop,
+      loudnessSafetyExtreme,
     });
   }, [
     volume,
@@ -89,27 +148,40 @@ export default function App() {
     noiseGate,
     freqHz,
     freqLevel,
+    powerLevel,
+    rockBassDrop,
+    loudnessSafetyExtreme,
   ]);
 
-  // Apply volume and db boost on load if battery was already ready
+  // Apply all settings on mount if battery was already ready
   // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount only
   useEffect(() => {
     if (batteryReady) {
       audioEngine.setVolume(volume);
       audioEngine.setDBBoost(dbBoost);
+      audioEngine.setUserPowerLevel(powerLevel);
+      audioEngine.setRockBassDrop(rockBassDrop);
+      audioEngine.setLoudnessSafetyExtreme(loudnessSafetyExtreme);
     }
   }, [batteryReady]);
 
   const handleBatteryReady = () => {
     setBatteryReady(true);
+    try {
+      localStorage.setItem(BATTERY_KEY, "1");
+    } catch (_) {}
     audioEngine.setVolume(volume);
     audioEngine.setDBBoost(dbBoost);
+    audioEngine.setUserPowerLevel(powerLevel);
+    audioEngine.setRockBassDrop(rockBassDrop);
+    audioEngine.setLoudnessSafetyExtreme(loudnessSafetyExtreme);
   };
 
   const handleFileChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
+      setIsPlaying(false);
       try {
         await audioEngine.loadFile(file);
         setHasFile(true);
@@ -140,6 +212,21 @@ export default function App() {
     audioEngine.setVolume(val);
   };
 
+  const handlePowerLevel = (level: number) => {
+    setPowerLevel(level);
+    audioEngine.setUserPowerLevel(level);
+  };
+
+  const handleRockBassDrop = (on: boolean) => {
+    setRockBassDrop(on);
+    // audioEngine call is made inside BrutusAmp directly
+  };
+
+  const handleLoudnessSafetyExtreme = (on: boolean) => {
+    setLoudnessSafetyExtreme(on);
+    // audioEngine call is made inside BrutusAmp directly
+  };
+
   const handleSave = () => {
     saveSettings({
       volume,
@@ -151,6 +238,9 @@ export default function App() {
       noiseGate,
       freqHz,
       freqLevel,
+      powerLevel,
+      rockBassDrop,
+      loudnessSafetyExtreme,
     });
     toast.success("Settings saved!");
   };
@@ -165,7 +255,6 @@ export default function App() {
     >
       <Toaster position="top-right" />
 
-      {/* Header */}
       <header
         className="w-full py-5 px-6"
         style={{ background: "#05080f", borderBottom: "2px solid #1e40af" }}
@@ -208,9 +297,16 @@ export default function App() {
               onSave={handleSave}
               initialReady={batteryReady}
             />
-            <BrutusAmp powered={batteryReady} />
+            <BrutusAmp
+              powered={batteryReady}
+              powerLevel={powerLevel}
+              onPowerLevel={handlePowerLevel}
+              rockBassDrop={rockBassDrop}
+              onRockBassDrop={handleRockBassDrop}
+              loudnessSafetyExtreme={loudnessSafetyExtreme}
+              onLoudnessSafetyExtreme={handleLoudnessSafetyExtreme}
+            />
 
-            {/* Transport + Volume panel */}
             <div
               className="rounded-lg p-5 space-y-4"
               style={{ background: "#0a0f1e", border: "2px solid #1e40af" }}
@@ -277,7 +373,6 @@ export default function App() {
                   </span>
                 )}
               </div>
-
               <div className="space-y-2">
                 <div className="flex justify-between text-sm font-bold font-mono">
                   <span style={{ color: "#facc15" }}>VOLUME</span>
@@ -310,9 +405,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Real dB Meter */}
             <DbMeter />
-
             <CorrectionPanel
               stabilizer={stabilizer}
               onStabilizerChange={setStabilizer}
@@ -321,6 +414,7 @@ export default function App() {
               initialActive={enginesActive}
               onActiveChange={setEnginesActive}
             />
+            <KickDrum />
             <Equalizer initialBands={eqBands} onBandsChange={setEqBands} />
             <FreqNoisePanel
               initialDbBoost={dbBoost}

@@ -76,7 +76,7 @@ export function Equalizer({ initialBands, onBandsChange }: EqualizerProps) {
           />
           <Label
             className="text-xs font-mono"
-            style={{ color: eqOn ? "#facc15" : "#64748b" }}
+            style={{ color: eqOn ? "#facc15" : "#1e3a6e" }}
           >
             EQ {eqOn ? "ON" : "OFF"}
           </Label>
@@ -144,10 +144,10 @@ export function Equalizer({ initialBands, onBandsChange }: EqualizerProps) {
               style={{
                 color:
                   bands[i] > 0
-                    ? "#22c55e"
+                    ? "#ef4444"
                     : bands[i] < 0
                       ? "#ef4444"
-                      : "#64748b",
+                      : "#3b82f6",
                 fontSize: "11px",
                 minHeight: "16px",
               }}
@@ -179,9 +179,9 @@ export function Equalizer({ initialBands, onBandsChange }: EqualizerProps) {
                   cursor: eqOn ? "pointer" : "not-allowed",
                   accentColor:
                     bands[i] > 0
-                      ? "#22c55e"
+                      ? "#ef4444"
                       : bands[i] < 0
-                        ? "#ef4444"
+                        ? "#3b82f6"
                         : "#3b82f6",
                   opacity: eqOn ? 1 : 0.4,
                   WebkitAppearance: "slider-vertical",
@@ -201,7 +201,7 @@ export function Equalizer({ initialBands, onBandsChange }: EqualizerProps) {
             </span>
             <span
               className="text-center font-mono"
-              style={{ color: "#64748b", fontSize: "8px" }}
+              style={{ color: "#3b82f6", fontSize: "8px" }}
             >
               {AudioEngine.EQ_BANDS[i] >= 1000
                 ? `${AudioEngine.EQ_BANDS[i] / 1000}k`
@@ -224,7 +224,7 @@ export function Equalizer({ initialBands, onBandsChange }: EqualizerProps) {
             <span className="text-xs font-mono" style={{ color: "#facc15" }}>
               1,953,000,000
             </span>
-            <span className="text-xs" style={{ color: "#22c55e" }}>
+            <span className="text-xs" style={{ color: "#3b82f6" }}>
               ACTIVE
             </span>
           </div>
