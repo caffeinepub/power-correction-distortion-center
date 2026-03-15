@@ -105,11 +105,73 @@ export function BrutusAmp({ powered }: BrutusAmpProps) {
           >
             GP / AUDIO DESIGNER
           </div>
+          {/* FIX 3: corrected wattage to 60,000,000W */}
           <div
             className="mt-3 text-xs font-mono"
             style={{ color: powered ? "#1d4ed8" : "#6b7280" }}
           >
-            6,000,000W | 120W RMS | 0 GAUGE WIRE
+            60,000,000W | 0 GAUGE WIRE
+          </div>
+
+          {/* FIX 3: 4 fuse visuals */}
+          <div className="mt-4 flex flex-col items-center gap-1">
+            <div
+              className="text-xs font-mono mb-1"
+              style={{
+                color: powered ? "#9ca3af" : "#4b5563",
+                letterSpacing: "0.15em",
+              }}
+            >
+              FUSES
+            </div>
+            <div className="flex gap-2">
+              {([0, 1, 2, 3] as const).map((fi) => (
+                <div key={fi} className="flex flex-col items-center gap-0.5">
+                  <div
+                    style={{
+                      width: "48px",
+                      height: "20px",
+                      background: powered
+                        ? "linear-gradient(180deg, #7f1d1d, #b91c1c)"
+                        : "linear-gradient(180deg, #1f2937, #374151)",
+                      border: powered
+                        ? "1px solid #f87171"
+                        : "1px solid #4b5563",
+                      borderRadius: "3px",
+                      position: "relative",
+                      boxShadow: powered
+                        ? "0 0 8px rgba(239,68,68,0.6)"
+                        : "none",
+                      transition: "all 0.4s ease",
+                    }}
+                  >
+                    {/* Fuse wire */}
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: "50%",
+                        left: "6px",
+                        right: "6px",
+                        height: "2px",
+                        marginTop: "-1px",
+                        background: powered ? "#fca5a5" : "#6b7280",
+                        borderRadius: "1px",
+                        boxShadow: powered ? "0 0 4px #ef4444" : "none",
+                      }}
+                    />
+                  </div>
+                  <span
+                    className="text-xs font-mono font-bold"
+                    style={{
+                      color: powered ? "#f87171" : "#6b7280",
+                      fontSize: "8px",
+                    }}
+                  >
+                    120W
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -128,6 +190,35 @@ export function BrutusAmp({ powered }: BrutusAmpProps) {
             />
           ))}
         </div>
+      </div>
+
+      {/* FIX 3: 0-gauge wire visual */}
+      <div
+        className="relative z-10 px-6 pb-4"
+        style={{ background: "linear-gradient(180deg, transparent, #0f172a)" }}
+      >
+        <div
+          className="text-xs font-mono mb-1 text-center"
+          style={{
+            color: powered ? "#6b7280" : "#374151",
+            letterSpacing: "0.12em",
+          }}
+        >
+          0 GAUGE WIRE
+        </div>
+        <div
+          style={{
+            height: "12px",
+            width: "100%",
+            background: "#1a1a1a",
+            border: "1px solid #374151",
+            borderRadius: "6px",
+            boxShadow: powered
+              ? "0 0 10px rgba(59,130,246,0.5), 0 0 20px rgba(29,78,216,0.2)"
+              : "none",
+            transition: "box-shadow 0.6s ease",
+          }}
+        />
       </div>
 
       <div

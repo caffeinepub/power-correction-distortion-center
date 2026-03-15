@@ -6,10 +6,12 @@ import { audioEngine } from "./audio/AudioEngine";
 import { BatterySystem } from "./components/BatterySystem";
 import { BrutusAmp } from "./components/BrutusAmp";
 import { CorrectionPanel } from "./components/CorrectionPanel";
+import { DbMeter } from "./components/DbMeter";
 import { Equalizer } from "./components/Equalizer";
 import { FreqNoisePanel } from "./components/FreqNoisePanel";
 import { SoundEngines } from "./components/SoundEngines";
 import { SoundMagnet } from "./components/SoundMagnet";
+import { MackieMixer } from "./components/mixer/MackieMixer";
 
 const STORAGE_KEY = "pcdc_settings_v1";
 
@@ -224,6 +226,9 @@ export default function App() {
               </div>
             </div>
 
+            {/* Real dB Meter */}
+            <DbMeter />
+
             <CorrectionPanel
               stabilizer={stabilizer}
               onStabilizerChange={setStabilizer}
@@ -232,6 +237,7 @@ export default function App() {
             <Equalizer />
             <FreqNoisePanel />
             <SoundMagnet />
+            <MackieMixer />
           </>
         )}
       </main>

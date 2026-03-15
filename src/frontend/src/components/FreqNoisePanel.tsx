@@ -35,6 +35,9 @@ export function FreqNoisePanel() {
     audioEngine.toggleNoiseGate(on);
   };
 
+  const gainValue = 1.0 + (dbBoost / 100) * 4.0;
+  const boostHigh = dbBoost > 50;
+
   return (
     <div
       data-ocid="freq.panel"
@@ -167,21 +170,71 @@ export function FreqNoisePanel() {
           </div>
         </div>
 
-        {/* DB Boost */}
+        {/* DB Boost -- FIX 1: more prominent, correct gain formula, red indicator */}
         <div
-          className="rounded p-3 space-y-3"
-          style={{ background: "#0d1527", border: "1px solid #1e3a6e" }}
+          className="rounded p-4 space-y-3"
+          style={{
+            background: "#0d1527",
+            border: `2px solid ${boostHigh ? "#ef4444" : "#1e3a6e"}`,
+            boxShadow: boostHigh ? "0 0 16px rgba(239,68,68,0.25)" : "none",
+            transition: "border-color 0.2s, box-shadow 0.2s",
+          }}
         >
-          <span
-            className="text-xs font-bold tracking-wider"
-            style={{ color: "#93c5fd" }}
+          <div className="flex items-center justify-between">
+            <span
+              className="text-sm font-black tracking-wider"
+              style={{
+                color: boostHigh ? "#ef4444" : "#93c5fd",
+                letterSpacing: "0.15em",
+              }}
+            >
+              DB BOOST
+            </span>
+            {boostHigh && (
+              <span
+                className="text-xs font-bold px-1.5 py-0.5 rounded"
+                style={{
+                  background: "#7f1d1d",
+                  color: "#ef4444",
+                  border: "1px solid #ef4444",
+                }}
+              >
+                HOT
+              </span>
+            )}
+          </div>
+
+          {/* Big gain readout */}
+          <div
+            className="text-center py-2 rounded"
+            style={{
+              background: "#05080f",
+              border: `1px solid ${boostHigh ? "#ef4444" : "#1e3a6e"}`,
+            }}
           >
-            DB BOOST
-          </span>
+            <div
+              className="text-3xl font-black font-mono"
+              style={{
+                color: boostHigh ? "#ef4444" : "#facc15",
+                lineHeight: 1,
+              }}
+            >
+              {gainValue.toFixed(2)}x
+            </div>
+            <div
+              className="text-xs font-mono mt-1"
+              style={{ color: "#64748b" }}
+            >
+              GAIN
+            </div>
+          </div>
+
           <div className="space-y-2">
             <div className="flex justify-between text-xs font-mono">
               <span style={{ color: "#64748b" }}>BOOST LEVEL</span>
-              <span style={{ color: "#facc15" }}>{dbBoost}%</span>
+              <span style={{ color: boostHigh ? "#ef4444" : "#facc15" }}>
+                {dbBoost}%
+              </span>
             </div>
             <input
               data-ocid="dbboost.input"
@@ -191,23 +244,27 @@ export function FreqNoisePanel() {
               value={dbBoost}
               onChange={(e) => updateDbBoost(Number.parseInt(e.target.value))}
               className="w-full"
-              style={{ accentColor: "#facc15" }}
+              style={{ accentColor: boostHigh ? "#ef4444" : "#facc15" }}
             />
+            {/* Visual indicator bar -- RED when above 50% */}
             <div
-              className="h-2 rounded-full overflow-hidden"
+              className="h-3 rounded-full overflow-hidden"
               style={{ background: "#1e3a6e" }}
             >
               <div
                 className="h-full rounded-full"
                 style={{
                   width: `${dbBoost}%`,
-                  background: "linear-gradient(90deg, #1d4ed8, #facc15)",
-                  transition: "width 0.1s linear",
+                  background: boostHigh
+                    ? "linear-gradient(90deg, #1d4ed8, #ef4444)"
+                    : "linear-gradient(90deg, #1d4ed8, #facc15)",
+                  boxShadow: boostHigh ? "0 0 8px #ef4444" : "none",
+                  transition: "width 0.1s linear, background 0.2s",
                 }}
               />
             </div>
             <div className="text-xs font-mono" style={{ color: "#64748b" }}>
-              Gain: {(1.0 + (dbBoost / 100) * 2).toFixed(2)}x | Clean boost
+              Gain: {gainValue.toFixed(2)}x | Clean boost | 5x max
             </div>
           </div>
         </div>

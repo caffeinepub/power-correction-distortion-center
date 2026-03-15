@@ -166,10 +166,11 @@ export class AudioEngine {
     if (f) f.gain.value = gainDb;
   }
 
+  // FIX 1: 5x gain at 100% (was 3x)
   setDBBoost(value: number) {
     this.ensureContext();
     if (this.dbBoostGain)
-      this.dbBoostGain.gain.value = 1.0 + (value / 100) * 2.0;
+      this.dbBoostGain.gain.value = 1.0 + (value / 100) * 4.0;
   }
 
   toggleStabilizer(on: boolean) {

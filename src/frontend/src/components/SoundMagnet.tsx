@@ -38,7 +38,12 @@ export function SoundMagnet() {
     <div
       data-ocid="magnet.panel"
       className="rounded-lg p-5 space-y-4"
-      style={{ background: "#0a0f1e", border: "2px solid #1e40af" }}
+      style={{
+        background: "#0a0f1e",
+        border: "2px solid #1e40af",
+        overflow: "hidden",
+        maxWidth: "100%",
+      }}
     >
       <div className="flex items-center justify-between">
         <h3
@@ -62,10 +67,17 @@ export function SoundMagnet() {
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-6">
+      {/* FIX 2: flex-col on mobile, flex-row on md+; magnet area uses vw-capped size */}
+      <div
+        className="flex flex-col md:flex-row items-center gap-6"
+        style={{ overflow: "hidden" }}
+      >
         <div
           className="relative flex items-center justify-center flex-shrink-0"
-          style={{ width: "260px", height: "260px" }}
+          style={{
+            width: "min(260px, 45vw)",
+            height: "min(260px, 45vw)",
+          }}
         >
           {RING_SCALES.map((scale) => (
             <div
@@ -104,14 +116,24 @@ export function SoundMagnet() {
           />
         </div>
 
-        <div className="flex-1 space-y-4">
+        <div
+          className="space-y-4"
+          style={{ minWidth: 0, flex: 1, overflow: "hidden" }}
+        >
           <div className="flex items-center gap-3">
             <Switch
               data-ocid="magnet.switch"
               checked={bluetooth}
               onCheckedChange={setBluetooth}
             />
-            <Label style={{ color: bluetooth ? "#60a5fa" : "#64748b" }}>
+            <Label
+              style={{
+                color: bluetooth ? "#60a5fa" : "#64748b",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
               Bluetooth:{" "}
               <span
                 style={{
@@ -144,7 +166,10 @@ export function SoundMagnet() {
                 }}
               />
             </div>
-            <div className="text-xs font-mono" style={{ color: "#64748b" }}>
+            <div
+              className="text-xs font-mono"
+              style={{ color: "#64748b", wordBreak: "break-word" }}
+            >
               Room sensitivity: {Math.round(t * 100)}% |{" "}
               {bluetooth ? "Full BT Potential" : "Phone Mode"}
             </div>
@@ -152,14 +177,23 @@ export function SoundMagnet() {
 
           <div
             className="px-3 py-2 rounded text-xs font-mono space-y-1"
-            style={{ background: "#05080f", border: "1px solid #1e3a6e" }}
+            style={{
+              background: "#05080f",
+              border: "1px solid #1e3a6e",
+              overflow: "hidden",
+            }}
           >
             <div style={{ color: "#64748b" }}>VIRTUAL SOUND MAGNET</div>
             <div style={{ color: "#93c5fd" }}>Expands with loudness</div>
-            <div style={{ color: "#93c5fd" }}>
+            <div style={{ color: "#93c5fd", wordBreak: "break-word" }}>
               Adapts to room acoustics via sensor
             </div>
-            <div style={{ color: bluetooth ? "#22c55e" : "#475569" }}>
+            <div
+              style={{
+                color: bluetooth ? "#22c55e" : "#475569",
+                wordBreak: "break-word",
+              }}
+            >
               {bluetooth
                 ? "Bluetooth: Max Potential"
                 : "Connect Bluetooth for max power"}
