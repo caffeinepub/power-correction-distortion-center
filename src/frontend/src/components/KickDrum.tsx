@@ -1,10 +1,23 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { audioEngine } from "../audio/AudioEngine";
+
+const LS_KEY = "kickdrum_drop80";
 
 export function KickDrum() {
   const [isHit, setIsHit] = useState(false);
-  const [drop80, setDrop80] = useState(0);
+  const [drop80, setDrop80] = useState<number>(() => {
+    const saved = localStorage.getItem(LS_KEY);
+    return saved !== null ? Number(saved) : 0;
+  });
   const hitTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Apply restored value to audio engine on mount
+  const initialDrop = useRef(drop80);
+  useEffect(() => {
+    if (initialDrop.current !== 0) {
+      audioEngine.set80HzDrop(initialDrop.current);
+    }
+  }, []);
 
   function fireKick() {
     const eng = (window as any).__audioEngine ?? audioEngine;
@@ -56,10 +69,13 @@ export function KickDrum() {
 
   function handle80HzDrop(val: number) {
     setDrop80(val);
+    localStorage.setItem(LS_KEY, String(val));
     audioEngine.set80HzDrop(val);
   }
 
-  const dropDb = -((drop80 / 100) * 12).toFixed(1);
+  // Computed display: 0 → 0 dB, 100 → -18 dB
+  const dropDbNum = -((drop80 / 100) * 18);
+  const dropDbDisplay = drop80 === 0 ? "FLAT" : `${dropDbNum.toFixed(1)} dB`;
 
   return (
     <div
@@ -170,7 +186,7 @@ export function KickDrum() {
               className="text-sm font-bold font-mono"
               style={{ color: drop80 > 0 ? "#ef4444" : "#3b82f6" }}
             >
-              {drop80 === 0 ? "FLAT" : `${dropDb} dB`}
+              {dropDbDisplay}
             </span>
             <div
               className="text-xs font-mono"
@@ -200,9 +216,9 @@ export function KickDrum() {
           className="flex justify-between text-xs font-mono"
           style={{ color: "#334155" }}
         >
-          <span>FLAT (0)</span>
-          <span style={{ fontSize: 9 }}>SAFT MODE — max -12 dB</span>
-          <span>MAX DROP (100)</span>
+          <span>FLAT (0 dB)</span>
+          <span style={{ fontSize: 9 }}>SAFT MODE — max -18 dB</span>
+          <span>MAX DROP (-18 dB)</span>
         </div>
       </div>
     </div>

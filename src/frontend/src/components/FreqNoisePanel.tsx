@@ -22,7 +22,6 @@ export function FreqNoisePanel({
   const [noiseGate, setNoiseGate] = useState(initialNoiseGate);
   const [dbBoost, setDbBoost] = useState(initialDbBoost);
 
-  // Apply restored settings to audio engine on mount
   // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount only
   useEffect(() => {
     audioEngine.setDBBoost(initialDbBoost);
@@ -30,10 +29,7 @@ export function FreqNoisePanel({
   }, []);
 
   const notify = (
-    updates: Partial<{
-      dbBoost: number;
-      noiseGate: boolean;
-    }>,
+    updates: Partial<{ dbBoost: number; noiseGate: boolean }>,
   ) => {
     const next = { dbBoost, noiseGate, hz: 440, freqLevel: 50, ...updates };
     onSettingsChange?.(next);
@@ -51,7 +47,8 @@ export function FreqNoisePanel({
     notify({ noiseGate: on });
   };
 
-  const gainValue = 1.0 + (dbBoost / 100) * 5.0;
+  // DB Boost: 1.0–3.0x (at 70% = 2.4x — the perfect level)
+  const gainValue = 1.0 + (dbBoost / 100) * 4.0;
   const boostHigh = dbBoost > 50;
 
   return (
@@ -154,7 +151,6 @@ export function FreqNoisePanel({
             )}
           </div>
 
-          {/* Big gain readout */}
           <div
             className="text-center py-2 rounded"
             style={{
@@ -196,7 +192,6 @@ export function FreqNoisePanel({
               className="w-full"
               style={{ accentColor: boostHigh ? "#ef4444" : "#facc15" }}
             />
-            {/* Visual indicator bar -- RED when above 50% */}
             <div
               className="h-3 rounded-full overflow-hidden"
               style={{ background: "#1e3a6e" }}
@@ -214,7 +209,8 @@ export function FreqNoisePanel({
               />
             </div>
             <div className="text-xs font-mono" style={{ color: "#1e40af" }}>
-              Gain: {gainValue.toFixed(2)}x | Crystal clear boost | 6x max
+              Gain: {gainValue.toFixed(2)}x | Crystal clear boost | 70% =
+              perfect level
             </div>
           </div>
         </div>
