@@ -6,21 +6,26 @@ import { audioEngine } from "../audio/AudioEngine";
 interface FreqNoisePanelProps {
   initialDbBoost?: number;
   initialNoiseGate?: boolean;
+  brickWallThreshold?: number;
   onSettingsChange?: (s: {
     dbBoost: number;
     noiseGate: boolean;
     hz: number;
     freqLevel: number;
   }) => void;
+  onBrickWallChange?: (val: number) => void;
 }
 
 export function FreqNoisePanel({
   initialDbBoost = 0,
   initialNoiseGate = false,
+  brickWallThreshold = -1,
   onSettingsChange,
+  onBrickWallChange,
 }: FreqNoisePanelProps) {
   const [noiseGate, setNoiseGate] = useState(initialNoiseGate);
   const [dbBoost, setDbBoost] = useState(initialDbBoost);
+  const [bwThresh, setBwThresh] = useState(brickWallThreshold);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount only
   useEffect(() => {
@@ -47,9 +52,14 @@ export function FreqNoisePanel({
     notify({ noiseGate: on });
   };
 
-  // DB Boost: 1.0–3.0x (at 70% = 2.4x — the perfect level)
+  const handleBrickWall = (val: number) => {
+    setBwThresh(val);
+    onBrickWallChange?.(val);
+  };
+
   const gainValue = 1.0 + (dbBoost / 100) * 4.0;
   const boostHigh = dbBoost > 50;
+  const bwLoose = bwThresh > -1;
 
   return (
     <div
@@ -215,6 +225,80 @@ export function FreqNoisePanel({
           </div>
         </div>
       </div>
+
+      {/* Brick Wall Threshold */}
+      <div
+        className="rounded p-4 space-y-3"
+        style={{
+          background: "#0d1527",
+          border: `2px solid ${bwLoose ? "#ef4444" : "#1e3a6e"}`,
+          boxShadow: bwLoose ? "0 0 12px rgba(239,68,68,0.2)" : "none",
+          transition: "border-color 0.2s, box-shadow 0.2s",
+        }}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <span
+              className="text-xs font-bold tracking-widest"
+              style={{ color: bwLoose ? "#ef4444" : "#3b82f6" }}
+            >
+              BRICK WALL THRESHOLD
+            </span>
+            <div
+              className="text-xs font-mono mt-0.5"
+              style={{ color: "#334155" }}
+            >
+              Controls final clipping safety ceiling
+            </div>
+          </div>
+          <div className="text-right">
+            <span
+              className="text-sm font-bold font-mono"
+              style={{ color: bwLoose ? "#ef4444" : "#3b82f6" }}
+            >
+              {bwThresh.toFixed(1)} dBFS
+            </span>
+            {bwLoose && (
+              <div
+                className="text-xs font-mono mt-0.5"
+                style={{ color: "#ef4444" }}
+              >
+                LOOSE
+              </div>
+            )}
+          </div>
+        </div>
+        <input
+          data-ocid="brickwall.input"
+          type="range"
+          min="-3.0"
+          max="-0.5"
+          step="0.1"
+          value={bwThresh}
+          onChange={(e) => handleBrickWall(Number(e.target.value))}
+          className="w-full"
+          style={{
+            accentColor: bwLoose ? "#ef4444" : "#3b82f6",
+            height: "8px",
+          }}
+        />
+        <div
+          className="flex justify-between text-xs font-mono"
+          style={{ color: "#334155" }}
+        >
+          <span>-3.0 dBFS (TIGHT)</span>
+          <span style={{ color: bwLoose ? "#ef4444" : "#3b82f6" }}>
+            {bwThresh.toFixed(1)}
+          </span>
+          <span>-0.5 dBFS (LOOSE)</span>
+        </div>
+        <div className="text-xs font-mono" style={{ color: "#1e3a6e" }}>
+          Brick wall: clipping safety only — ease limiter handles distortion
+        </div>
+      </div>
+
+      {/* Label to suppress unused import warning */}
+      <Label className="sr-only" />
     </div>
   );
 }

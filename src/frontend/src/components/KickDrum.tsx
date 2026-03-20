@@ -2,21 +2,35 @@ import { useEffect, useRef, useState } from "react";
 import { audioEngine } from "../audio/AudioEngine";
 
 const LS_KEY = "kickdrum_drop80";
+const LS_THUMP = "kickdrum_thump60";
+const LS_KICK100 = "kickdrum_kick100";
 
-export function KickDrum() {
+interface KickDrumProps {
+  onThump?: (val: number) => void;
+  onKick100?: (val: number) => void;
+}
+
+export function KickDrum({ onThump, onKick100 }: KickDrumProps = {}) {
   const [isHit, setIsHit] = useState(false);
   const [drop80, setDrop80] = useState<number>(() => {
     const saved = localStorage.getItem(LS_KEY);
     return saved !== null ? Number(saved) : 0;
   });
+  const [thump60, setThump60] = useState<number>(() => {
+    const saved = localStorage.getItem(LS_THUMP);
+    return saved !== null ? Number(saved) : 0;
+  });
+  const [kick100, setKick100] = useState<number>(() => {
+    const saved = localStorage.getItem(LS_KICK100);
+    return saved !== null ? Number(saved) : 0;
+  });
   const hitTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Apply restored value to audio engine on mount
-  const initialDrop = useRef(drop80);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount only
   useEffect(() => {
-    if (initialDrop.current !== 0) {
-      audioEngine.set80HzDrop(initialDrop.current);
-    }
+    if (drop80 !== 0) audioEngine.set80HzDrop(drop80);
+    if (thump60 !== 0) onThump?.(thump60);
+    if (kick100 !== 0) onKick100?.(kick100);
   }, []);
 
   function fireKick() {
@@ -33,7 +47,6 @@ export function KickDrum() {
 
     const now = ctx.currentTime;
 
-    // Tone layer: 150Hz -> 40Hz pitch drop = solid kick thump
     const osc = ctx.createOscillator();
     const oscGain = ctx.createGain();
     osc.type = "sine";
@@ -46,7 +59,6 @@ export function KickDrum() {
     osc.start(now);
     osc.stop(now + 0.4);
 
-    // Click/punch layer: tight noise burst for attack snap
     const bufSize = ctx.sampleRate * 0.02;
     const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
     const data = buf.getChannelData(0);
@@ -73,9 +85,82 @@ export function KickDrum() {
     audioEngine.set80HzDrop(val);
   }
 
-  // Computed display: 0 → 0 dB, 100 → -18 dB
+  function handleThump60(val: number) {
+    setThump60(val);
+    localStorage.setItem(LS_THUMP, String(val));
+    onThump?.(val);
+  }
+
+  function handleKick100(val: number) {
+    setKick100(val);
+    localStorage.setItem(LS_KICK100, String(val));
+    onKick100?.(val);
+  }
+
   const dropDbNum = -((drop80 / 100) * 18);
   const dropDbDisplay = drop80 === 0 ? "FLAT" : `${dropDbNum.toFixed(1)} dB`;
+
+  const sliderBox = (
+    label: string,
+    sublabel: string,
+    val: number,
+    min: number,
+    max: number,
+    ocid: string,
+    onChange: (v: number) => void,
+    displayVal: string,
+    isHot: boolean,
+  ) => (
+    <div
+      className="rounded p-4 space-y-3"
+      style={{ background: "#060c1a", border: "1px solid #1e3a6e" }}
+    >
+      <div className="flex items-center justify-between">
+        <div>
+          <span
+            className="text-xs font-bold tracking-widest"
+            style={{
+              color: isHot ? "#ef4444" : "#3b82f6",
+              fontFamily: "'Bricolage Grotesque', sans-serif",
+            }}
+          >
+            {label}
+          </span>
+          <div
+            className="text-xs font-mono mt-0.5"
+            style={{ color: "#475569" }}
+          >
+            {sublabel}
+          </div>
+        </div>
+        <span
+          className="text-sm font-bold font-mono"
+          style={{ color: isHot ? "#ef4444" : "#3b82f6" }}
+        >
+          {displayVal}
+        </span>
+      </div>
+      <input
+        data-ocid={ocid}
+        type="range"
+        min={min}
+        max={max}
+        step="0.5"
+        value={val}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full"
+        style={{ accentColor: isHot ? "#ef4444" : "#3b82f6", height: "8px" }}
+      />
+      <div
+        className="flex justify-between text-xs font-mono"
+        style={{ color: "#334155" }}
+      >
+        <span>{min} dB</span>
+        <span>FLAT (0)</span>
+        <span>+{max} dB</span>
+      </div>
+    </div>
+  );
 
   return (
     <div
@@ -93,7 +178,6 @@ export function KickDrum() {
       </h3>
 
       <div className="flex flex-wrap items-center gap-8">
-        {/* Drum pad */}
         <button
           data-ocid="kickdrum.primary_button"
           type="button"
@@ -135,7 +219,6 @@ export function KickDrum() {
           </span>
         </button>
 
-        {/* Status */}
         <div className="space-y-1">
           <div className="text-xs font-mono" style={{ color: "#475569" }}>
             TAP TO FIRE
@@ -158,67 +241,93 @@ export function KickDrum() {
         </div>
       </div>
 
-      {/* 80 Hz Saft Drop Slider */}
-      <div
-        className="rounded p-4 space-y-3"
-        style={{ background: "#060c1a", border: "1px solid #1e3a6e" }}
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <span
-              className="text-xs font-bold tracking-widest"
-              style={{
-                color: "#ef4444",
-                fontFamily: "'Bricolage Grotesque', sans-serif",
-              }}
-            >
-              80 Hz SAFT DROP
-            </span>
-            <div
-              className="text-xs font-mono mt-0.5"
-              style={{ color: "#475569" }}
-            >
-              Pulls 80Hz down safely — leaves all other bass open
-            </div>
-          </div>
-          <div className="text-right">
-            <span
-              className="text-sm font-bold font-mono"
-              style={{ color: drop80 > 0 ? "#ef4444" : "#3b82f6" }}
-            >
-              {dropDbDisplay}
-            </span>
-            <div
-              className="text-xs font-mono"
-              style={{ color: "#475569", fontSize: 9 }}
-            >
-              80 Hz only
-            </div>
-          </div>
-        </div>
+      <div className="space-y-3">
+        {/* THUMP 60Hz */}
+        {sliderBox(
+          "THUMP — 60 Hz",
+          "Deep warm sub thump",
+          thump60,
+          -12,
+          12,
+          "kickdrum.toggle",
+          handleThump60,
+          thump60 === 0 ? "FLAT" : `${thump60 > 0 ? "+" : ""}${thump60} dB`,
+          thump60 > 0,
+        )}
 
-        <input
-          data-ocid="kickdrum.input"
-          type="range"
-          min="0"
-          max="100"
-          step="1"
-          value={drop80}
-          onChange={(e) => handle80HzDrop(Number(e.target.value))}
-          className="w-full"
-          style={{
-            accentColor: drop80 > 0 ? "#ef4444" : "#3b82f6",
-            height: "8px",
-          }}
-        />
+        {/* KICK 100Hz */}
+        {sliderBox(
+          "KICK — 100 Hz",
+          "Punchy kick presence",
+          kick100,
+          -12,
+          12,
+          "kickdrum.select",
+          handleKick100,
+          kick100 === 0 ? "FLAT" : `${kick100 > 0 ? "+" : ""}${kick100} dB`,
+          kick100 > 0,
+        )}
 
+        {/* 80 Hz Saft Drop */}
         <div
-          className="flex justify-between text-xs font-mono"
-          style={{ color: "#334155" }}
+          className="rounded p-4 space-y-3"
+          style={{ background: "#060c1a", border: "1px solid #1e3a6e" }}
         >
-          <span>FLAT (0 dB)</span>
-          <span style={{ fontSize: 9 }}>SAFT MODE — max -18 dB</span>
-          <span>MAX DROP (-18 dB)</span>
+          <div className="flex items-center justify-between">
+            <div>
+              <span
+                className="text-xs font-bold tracking-widest"
+                style={{
+                  color: "#ef4444",
+                  fontFamily: "'Bricolage Grotesque', sans-serif",
+                }}
+              >
+                80 Hz SAFT DROP
+              </span>
+              <div
+                className="text-xs font-mono mt-0.5"
+                style={{ color: "#475569" }}
+              >
+                Pulls 80Hz down safely — leaves all other bass open
+              </div>
+            </div>
+            <div className="text-right">
+              <span
+                className="text-sm font-bold font-mono"
+                style={{ color: drop80 > 0 ? "#ef4444" : "#3b82f6" }}
+              >
+                {dropDbDisplay}
+              </span>
+              <div
+                className="text-xs font-mono"
+                style={{ color: "#475569", fontSize: 9 }}
+              >
+                80 Hz only
+              </div>
+            </div>
+          </div>
+          <input
+            data-ocid="kickdrum.input"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={drop80}
+            onChange={(e) => handle80HzDrop(Number(e.target.value))}
+            className="w-full"
+            style={{
+              accentColor: drop80 > 0 ? "#ef4444" : "#3b82f6",
+              height: "8px",
+            }}
+          />
+          <div
+            className="flex justify-between text-xs font-mono"
+            style={{ color: "#334155" }}
+          >
+            <span>FLAT (0 dB)</span>
+            <span style={{ fontSize: 9 }}>SAFT MODE — max -18 dB</span>
+            <span>MAX DROP (-18 dB)</span>
+          </div>
         </div>
       </div>
     </div>

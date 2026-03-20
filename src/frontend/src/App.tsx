@@ -5,19 +5,24 @@ import { toast } from "sonner";
 import { audioEngine } from "./audio/AudioEngine";
 import { BatterySystem } from "./components/BatterySystem";
 import { CorrectionPanel } from "./components/CorrectionPanel";
+import { CrossoverSystem } from "./components/CrossoverSystem";
 import { DbMeter } from "./components/DbMeter";
+import { DbNodeIndicator } from "./components/DbNodeIndicator";
 import { Equalizer } from "./components/Equalizer";
 import { FreqNoisePanel } from "./components/FreqNoisePanel";
 import { KickDrum } from "./components/KickDrum";
 import { PowerWires } from "./components/PowerWires";
 import { SoundEngines } from "./components/SoundEngines";
 import { SoundMagnet } from "./components/SoundMagnet";
+import { SpeakerAdaptive } from "./components/SpeakerAdaptive";
+import { UploadDrawer } from "./components/UploadDrawer";
 import { BrutusAmp } from "./components/amp/BrutusAmp";
 
 // ─── Persistence ────────────────────────────────────────────────────────────────────────
-const STORAGE_KEY = "pcdc_settings_v5";
+const STORAGE_KEY = "pcdc_settings_v6";
 const BATTERY_KEY = "pcdc_battery_ready";
 const LEGACY_KEYS = [
+  "pcdc_settings_v5",
   "pcdc_settings_v4",
   "pcdc_settings_v3",
   "pcdc_settings_v2",
@@ -38,6 +43,7 @@ interface SavedSettings {
   smoothWarm: boolean;
   bullhornActive: boolean;
   smallSpeakerMode: boolean;
+  brickWallThreshold: number;
 }
 
 function loadSettings(): SavedSettings {
@@ -56,6 +62,7 @@ function loadSettings(): SavedSettings {
         loudnessSafetyExtreme: p.loudnessSafetyExtreme ?? false,
         smoothWarm: p.smoothWarm ?? false,
         smallSpeakerMode: p.smallSpeakerMode ?? false,
+        brickWallThreshold: p.brickWallThreshold ?? -1,
       };
     }
   } catch (_) {}
@@ -71,6 +78,7 @@ function loadSettings(): SavedSettings {
           loudnessSafetyExtreme: p.loudnessSafetyExtreme ?? false,
           smoothWarm: p.smoothWarm ?? false,
           smallSpeakerMode: p.smallSpeakerMode ?? false,
+          brickWallThreshold: (p as any).brickWallThreshold ?? -1,
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(m));
         try {
@@ -93,6 +101,7 @@ function loadSettings(): SavedSettings {
     smoothWarm: false,
     bullhornActive: false,
     smallSpeakerMode: false,
+    brickWallThreshold: -1,
   };
 }
 
@@ -129,6 +138,12 @@ export default function App() {
   const [smallSpeakerMode, setSmallSpeakerMode] = useState(
     saved.smallSpeakerMode ?? false,
   );
+  const [brickWallThreshold, setBrickWallThreshold] = useState(
+    saved.brickWallThreshold ?? -1,
+  );
+
+  const [uploadDrawerOpen, setUploadDrawerOpen] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -138,6 +153,7 @@ export default function App() {
   const pausedAtRef = useRef(0);
   const startedAtRef = useRef(0);
 
+  // Audio node refs
   const sourceInputRef = useRef<GainNode | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
   const engineGainsRef = useRef<GainNode[]>([]);
@@ -150,6 +166,17 @@ export default function App() {
   const dbBoostGainRef = useRef<GainNode | null>(null);
   const outputGainRef = useRef<GainNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
+  // New node refs
+  const brickWallRef = useRef<DynamicsCompressorNode | null>(null);
+  const hardCorrectionRef = useRef<DynamicsCompressorNode | null>(null);
+  const sub40FilterRef = useRef<BiquadFilterNode | null>(null);
+  const thump60FilterRef = useRef<BiquadFilterNode | null>(null);
+  const crossKick80FilterRef = useRef<BiquadFilterNode | null>(null);
+  const kick100FilterRef = useRef<BiquadFilterNode | null>(null);
+  const crossBassRef = useRef<BiquadFilterNode | null>(null);
+  const crossMidRef = useRef<BiquadFilterNode | null>(null);
+  const crossHighRef = useRef<BiquadFilterNode | null>(null);
+  const crossMixerRef = useRef<GainNode | null>(null);
 
   const S = useRef(saved);
   useEffect(() => {
@@ -166,6 +193,7 @@ export default function App() {
       smoothWarm,
       bullhornActive,
       smallSpeakerMode,
+      brickWallThreshold,
     };
   });
 
@@ -183,6 +211,7 @@ export default function App() {
       smoothWarm,
       bullhornActive,
       smallSpeakerMode,
+      brickWallThreshold,
     });
   }, [
     volume,
@@ -197,20 +226,22 @@ export default function App() {
     smoothWarm,
     bullhornActive,
     smallSpeakerMode,
+    brickWallThreshold,
   ]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // buildChain
   //
   // Signal chain:
-  //   source → sourceInput → engines(A+B+C+D) → mixer → EQ[10] → hz80
-  //     → correctionGain → noiseGate → stereo → soundMagnet → env
-  //     → clarity → ampGain
-  //     → commander → gainPasses → monitor → stabilizerNode → signalCleaner
+  //   source → sourceInput → engines(A+B+C+D) → mixer → EQ[10]
+  //     → crossBass ─┐
+  //     → crossMid   ├─ crossMixer → sub40 → thump60 → crossKick80
+  //     → crossHigh ─┘           → hz80 → kick100 → correctionGain
+  //     → noiseGate → stereo → soundMagnet → env → clarity
+  //     → ampGain → hardCorrection → commander → gainPasses
+  //     → monitor → stabilizerNode → signalCleaner
   //     → limEase → brickWall
-  //     → masterGain (volume, clean 0–1.0)
-  //     → dbBoostGain (1–5x, after volume)
-  //     → outputGain → analyser → speakers
+  //     → masterGain (volume) → dbBoostGain → outputGain → analyser → speakers
   // ─────────────────────────────────────────────────────────────────────────
   const buildChain = useCallback((ctx: AudioContext) => {
     const s = S.current;
@@ -238,12 +269,56 @@ export default function App() {
       return f;
     });
 
+    // ── Crossover: bass locked from highs ──────────────────────────────────
+    const crossBass = ctx.createBiquadFilter();
+    crossBass.type = "lowpass";
+    crossBass.frequency.value = 250;
+    crossBass.Q.value = 0.7;
+
+    const crossMid = ctx.createBiquadFilter();
+    crossMid.type = "bandpass";
+    crossMid.frequency.value = 1000;
+    crossMid.Q.value = 0.5;
+
+    const crossHigh = ctx.createBiquadFilter();
+    crossHigh.type = "highpass";
+    crossHigh.frequency.value = 4000;
+    crossHigh.Q.value = 0.7;
+
+    const crossMixer = ctx.createGain();
+    crossMixer.gain.value = 1.0;
+
+    // ── Sub/Kick control filters ───────────────────────────────────────────
+    const sub40Filter = ctx.createBiquadFilter();
+    sub40Filter.type = "peaking";
+    sub40Filter.frequency.value = 40;
+    sub40Filter.Q.value = 1.0;
+    sub40Filter.gain.value = 0;
+
+    const thump60Filter = ctx.createBiquadFilter();
+    thump60Filter.type = "peaking";
+    thump60Filter.frequency.value = 60;
+    thump60Filter.Q.value = 1.0;
+    thump60Filter.gain.value = 0;
+
+    const crossKick80Filter = ctx.createBiquadFilter();
+    crossKick80Filter.type = "peaking";
+    crossKick80Filter.frequency.value = 80;
+    crossKick80Filter.Q.value = 1.2;
+    crossKick80Filter.gain.value = 0;
+
     // 80 Hz filter (Rock Concert or Saft Drop)
     const hz80Filter = ctx.createBiquadFilter();
     hz80Filter.type = "peaking";
     hz80Filter.frequency.value = 80;
     hz80Filter.Q.value = s.rockBassDrop ? 1.5 : 1.0;
     hz80Filter.gain.value = s.rockBassDrop ? 8 : 0;
+
+    const kick100Filter = ctx.createBiquadFilter();
+    kick100Filter.type = "peaking";
+    kick100Filter.frequency.value = 100;
+    kick100Filter.Q.value = 1.0;
+    kick100Filter.gain.value = 0;
 
     // Stabilizer / correction gain pass
     const correctionGain = ctx.createGain();
@@ -286,6 +361,14 @@ export default function App() {
     // HBS Amp saft
     const ampGain = ctx.createGain();
     ampGain.gain.value = s.loudnessSafetyExtreme ? 4.0 : 3.5;
+
+    // ── Hard Correction — xxxx strength ───────────────────────────────────
+    const hardCorrection = ctx.createDynamicsCompressor();
+    hardCorrection.threshold.value = s.loudnessSafetyExtreme ? -2 : -3;
+    hardCorrection.knee.value = 0;
+    hardCorrection.ratio.value = s.loudnessSafetyExtreme ? 40 : 20;
+    hardCorrection.attack.value = 0.0005;
+    hardCorrection.release.value = 0.03;
 
     // Correction 1: Commander — fast distortion attack
     const commander = ctx.createDynamicsCompressor();
@@ -335,9 +418,9 @@ export default function App() {
     limEase.attack.value = 0.003;
     limEase.release.value = 0.1;
 
-    // Brick wall: clipping ONLY, final safety
+    // Brick wall: clipping ONLY, final safety — user-controlled threshold
     const brickWall = ctx.createDynamicsCompressor();
-    brickWall.threshold.value = -1;
+    brickWall.threshold.value = s.brickWallThreshold ?? -1;
     brickWall.knee.value = 0;
     brickWall.ratio.value = 20;
     brickWall.attack.value = 0.001;
@@ -359,7 +442,7 @@ export default function App() {
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 2048;
 
-    // ── Wire chain ──────────────────────────────────────────────────────────────────
+    // ── Wire chain ──────────────────────────────────────────────────────────
     for (const eg of engineGains) {
       sourceInput.connect(eg);
       eg.connect(mixer);
@@ -369,8 +452,20 @@ export default function App() {
       prev.connect(f);
       prev = f;
     }
-    prev.connect(hz80Filter);
-    hz80Filter.connect(correctionGain);
+    // Crossover: parallel split → merge
+    prev.connect(crossBass);
+    prev.connect(crossMid);
+    prev.connect(crossHigh);
+    crossBass.connect(crossMixer);
+    crossMid.connect(crossMixer);
+    crossHigh.connect(crossMixer);
+    // Sub/kick filters
+    crossMixer.connect(sub40Filter);
+    sub40Filter.connect(thump60Filter);
+    thump60Filter.connect(crossKick80Filter);
+    crossKick80Filter.connect(hz80Filter);
+    hz80Filter.connect(kick100Filter);
+    kick100Filter.connect(correctionGain);
     correctionGain.connect(noiseGate);
     noiseGate.connect(stereoSplitter);
     stereoSplitter.connect(stereoLeft, 0);
@@ -385,7 +480,8 @@ export default function App() {
     soundMagnetGain.connect(clarityFilter);
     envWet.connect(clarityFilter);
     clarityFilter.connect(ampGain);
-    ampGain.connect(commander);
+    ampGain.connect(hardCorrection);
+    hardCorrection.connect(commander);
     commander.connect(gainPasses);
     gainPasses.connect(monitor);
     monitor.connect(stabilizerNode);
@@ -411,6 +507,16 @@ export default function App() {
     dbBoostGainRef.current = dbBoostGain;
     outputGainRef.current = outputGain;
     analyserRef.current = analyser;
+    brickWallRef.current = brickWall;
+    hardCorrectionRef.current = hardCorrection;
+    sub40FilterRef.current = sub40Filter;
+    thump60FilterRef.current = thump60Filter;
+    crossKick80FilterRef.current = crossKick80Filter;
+    kick100FilterRef.current = kick100Filter;
+    crossBassRef.current = crossBass;
+    crossMidRef.current = crossMid;
+    crossHighRef.current = crossHigh;
+    crossMixerRef.current = crossMixer;
 
     // Bind to audioEngine singleton
     audioEngine.bindNodes(ctx, {
@@ -449,7 +555,6 @@ export default function App() {
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      // Stop any current playback cleanly
       if (isPlayingRef.current) {
         try {
           sourceRef.current?.stop();
@@ -460,7 +565,6 @@ export default function App() {
       sourceRef.current = null;
       pausedAtRef.current = 0;
       try {
-        // Close old context and create a fresh one
         if (audioCtxRef.current) {
           try {
             await audioCtxRef.current.close();
@@ -530,7 +634,7 @@ export default function App() {
     }
   };
 
-  // Volume: exponential curve, amp drives loudness
+  // ─── Handlers ──────────────────────────────────────────────────────────────
   const handleVolume = (val: number) => {
     setVolume(val);
     if (masterGainRef.current) {
@@ -539,7 +643,6 @@ export default function App() {
     audioEngine.setVolume(val);
   };
 
-  // Battery ready
   const handleBatteryReady = () => {
     setBatteryReady(true);
     try {
@@ -558,7 +661,6 @@ export default function App() {
     audioEngine.toggleStabilizer(val);
   };
 
-  // Rock Concert: warm 80 Hz boost
   const handleRockBassDrop = (on: boolean) => {
     setRockBassDrop(on);
     if (hz80FilterRef.current) {
@@ -568,16 +670,18 @@ export default function App() {
     audioEngine.setRockBassDrop(on);
   };
 
-  // Extreme: max amp gain
   const handleLoudnessSafetyExtreme = (on: boolean) => {
     setLoudnessSafetyExtreme(on);
     if (ampGainRef.current && batteryReady) {
       ampGainRef.current.gain.value = on ? 4.0 : 3.5;
     }
+    if (hardCorrectionRef.current) {
+      hardCorrectionRef.current.ratio.value = on ? 40 : 20;
+      hardCorrectionRef.current.threshold.value = on ? -2 : -3;
+    }
     audioEngine.setLoudnessSafetyExtreme(on);
   };
 
-  // DB Boost: 0-100% → 1.0-5.0x
   const handleDbBoostChange = (val: number) => {
     setDbBoost(val);
     if (dbBoostGainRef.current) {
@@ -586,7 +690,6 @@ export default function App() {
     audioEngine.setDBBoost(val);
   };
 
-  // Smooth Warm
   const handleSmoothWarm = (on: boolean) => {
     setSmoothWarm(on);
     audioEngine.setSmoothWarm(on);
@@ -600,6 +703,34 @@ export default function App() {
   const handleSmallSpeaker = (on: boolean) => {
     setSmallSpeakerMode(on);
     audioEngine.setSmallSpeakerMode(on);
+  };
+
+  const handleBrickWallThreshold = (val: number) => {
+    setBrickWallThreshold(val);
+    if (brickWallRef.current) brickWallRef.current.threshold.value = val;
+  };
+
+  // Crossover callbacks
+  const handleCrossoverDrop = (val: number) => {
+    if (sub40FilterRef.current) sub40FilterRef.current.gain.value = val;
+  };
+
+  const handleCrossoverBassThump = (val: number) => {
+    if (thump60FilterRef.current) thump60FilterRef.current.gain.value = val;
+  };
+
+  const handleCrossoverKick = (val: number) => {
+    if (crossKick80FilterRef.current)
+      crossKick80FilterRef.current.gain.value = val;
+  };
+
+  // KickDrum extra sliders
+  const handleKickThump60 = (val: number) => {
+    if (thump60FilterRef.current) thump60FilterRef.current.gain.value = val;
+  };
+
+  const handleKickKick100 = (val: number) => {
+    if (kick100FilterRef.current) kick100FilterRef.current.gain.value = val;
   };
 
   const handleSave = () => {
@@ -616,8 +747,45 @@ export default function App() {
       smoothWarm,
       bullhornActive,
       smallSpeakerMode,
+      brickWallThreshold,
     });
     toast.success("Settings saved!");
+  };
+
+  // Current settings snapshot for speaker presets
+  const currentSettingsSnapshot = {
+    volume,
+    stabilizer,
+    dbBoost,
+    eqBands,
+    enginesActive,
+    noiseGate,
+    rockBassDrop,
+    loudnessSafetyExtreme,
+    smoothWarm,
+    bullhornActive,
+    smallSpeakerMode,
+    brickWallThreshold,
+  };
+
+  const handleLoadPreset = (settings: Record<string, unknown>) => {
+    const s = settings as Partial<SavedSettings>;
+    if (s.volume !== undefined) handleVolume(s.volume);
+    if (s.dbBoost !== undefined) handleDbBoostChange(s.dbBoost);
+    if (s.stabilizer !== undefined) handleStabilizer(s.stabilizer);
+    if (s.rockBassDrop !== undefined) handleRockBassDrop(s.rockBassDrop);
+    if (s.loudnessSafetyExtreme !== undefined)
+      handleLoudnessSafetyExtreme(s.loudnessSafetyExtreme);
+    if (s.smoothWarm !== undefined) handleSmoothWarm(s.smoothWarm);
+    if (s.bullhornActive !== undefined) handleBullhorn(s.bullhornActive);
+    if (s.smallSpeakerMode !== undefined)
+      handleSmallSpeaker(s.smallSpeakerMode);
+    if (s.brickWallThreshold !== undefined)
+      handleBrickWallThreshold(s.brickWallThreshold);
+    if (s.eqBands) setEqBands(s.eqBands);
+    if (s.enginesActive) setEnginesActive(s.enginesActive);
+    if (s.noiseGate !== undefined) setNoiseGate(s.noiseGate);
+    toast.success("Speaker preset loaded!");
   };
 
   return (
@@ -652,8 +820,8 @@ export default function App() {
             <div
               className="w-2 h-2 rounded-full"
               style={{
-                background: batteryReady ? "#22c55e" : "#ef4444",
-                boxShadow: batteryReady ? "0 0 6px #22c55e" : "0 0 6px #ef4444",
+                background: batteryReady ? "#3b82f6" : "#ef4444",
+                boxShadow: batteryReady ? "0 0 6px #3b82f6" : "0 0 6px #ef4444",
               }}
             />
             <span>{batteryReady ? "SYSTEM ONLINE" : "CHARGING..."}</span>
@@ -749,51 +917,39 @@ export default function App() {
                   style={{
                     padding: "8px 16px",
                     borderRadius: "6px",
-                    background: smoothWarm ? "#1a2a10" : "#0d1527",
-                    color: smoothWarm ? "#86efac" : "#3b82f6",
-                    border: `1px solid ${smoothWarm ? "#22c55e" : "#1e3a6e"}`,
+                    background: smoothWarm ? "#0d1527" : "#0d1527",
+                    color: smoothWarm ? "#3b82f6" : "#3b82f6",
+                    border: `1px solid ${smoothWarm ? "#3b82f6" : "#1e3a6e"}`,
                     fontSize: "12px",
                     fontWeight: "800",
                     letterSpacing: "0.1em",
                     cursor: "pointer",
                     boxShadow: smoothWarm
-                      ? "0 0 8px rgba(34,197,94,0.4)"
+                      ? "0 0 8px rgba(59,130,246,0.4)"
                       : "none",
-                    transition: "all 0.2s",
                   }}
                 >
-                  {smoothWarm ? "SMOOTH WARM ON" : "SMOOTH WARM"}
+                  {smoothWarm ? "WARM ON" : "SMOOTH WARM"}
                 </button>
-
-                {hasFile && (
-                  <span
-                    className="text-xs font-mono"
-                    data-ocid="transport.success_state"
-                    style={{ color: "#22c55e" }}
-                  >
-                    FILE LOADED ✓
-                  </span>
-                )}
               </div>
 
               {/* Volume */}
               <div className="space-y-2">
-                <div className="flex justify-between text-sm font-bold font-mono">
-                  <span style={{ color: "#facc15" }}>VOLUME</span>
-                  <span style={{ color: "#e2e8f0" }}>{volume} / 100</span>
+                <div className="flex justify-between text-xs font-mono">
+                  <span style={{ color: "#3b82f6" }}>VOLUME</span>
+                  <span style={{ color: "#facc15" }}>{volume}%</span>
                 </div>
                 <input
                   data-ocid="transport.input"
                   type="range"
                   min="0"
                   max="100"
-                  step="1"
                   value={volume}
                   onChange={(e) =>
                     handleVolume(Number.parseInt(e.target.value))
                   }
                   className="w-full"
-                  style={{ accentColor: "#facc15", height: "8px" }}
+                  style={{ accentColor: "#3b82f6" }}
                 />
                 <div
                   className="flex justify-between text-xs font-mono"
@@ -801,8 +957,8 @@ export default function App() {
                 >
                   <span>0</span>
                   <span style={{ fontSize: "10px" }}>
-                    Engines → Amp 3.5x saft → 5 Corrections → LimiterEase →
-                    BrickWall → Volume → DBBoost → Out
+                    Engines → Amp 3.5x saft → HardCorr → 5 Corrections →
+                    LimiterEase → BrickWall → Volume → DBBoost → Out
                   </span>
                   <span>100</span>
                 </div>
@@ -810,6 +966,7 @@ export default function App() {
             </div>
 
             <DbMeter />
+            <DbNodeIndicator analyserNode={analyserRef.current} />
 
             <CorrectionPanel
               stabilizer={stabilizer}
@@ -819,17 +976,28 @@ export default function App() {
               initialActive={enginesActive}
               onActiveChange={setEnginesActive}
             />
-            <KickDrum />
+            <KickDrum
+              onThump={handleKickThump60}
+              onKick100={handleKickKick100}
+            />
+            <CrossoverSystem
+              onBassThump={handleCrossoverBassThump}
+              onKick={handleCrossoverKick}
+              onDrop={handleCrossoverDrop}
+            />
             <Equalizer initialBands={eqBands} onBandsChange={setEqBands} />
             <FreqNoisePanel
               initialDbBoost={dbBoost}
               initialNoiseGate={noiseGate}
+              brickWallThreshold={brickWallThreshold}
+              onBrickWallChange={handleBrickWallThreshold}
               onSettingsChange={(s) => {
                 handleDbBoostChange(s.dbBoost);
                 setNoiseGate(s.noiseGate);
               }}
             />
-            {/* ─── BULLHORN MODE ────────────────────────────────────────── */}
+
+            {/* ─── BULLHORN MODE ─── */}
             <div
               style={{
                 background: bullhornActive
@@ -840,14 +1008,12 @@ export default function App() {
                   : "1px solid #1e3a6e",
                 borderRadius: "12px",
                 padding: "20px 24px",
-                marginTop: "16px",
                 boxShadow: bullhornActive
                   ? "0 0 24px rgba(220,38,38,0.3), inset 0 0 40px rgba(220,38,38,0.05)"
                   : "none",
                 transition: "all 0.3s ease",
               }}
             >
-              {/* Header */}
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
                   <span style={{ fontSize: "22px" }}>🔊</span>
@@ -871,7 +1037,6 @@ export default function App() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  {/* Status badge */}
                   <span
                     className="font-mono font-black text-xs px-3 py-1"
                     style={{
@@ -889,7 +1054,6 @@ export default function App() {
                   >
                     {bullhornActive ? "ACTIVE" : "OFF"}
                   </span>
-                  {/* Toggle */}
                   <button
                     type="button"
                     data-ocid="bullhorn.toggle"
@@ -930,7 +1094,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Active label */}
               {bullhornActive && (
                 <div
                   className="font-mono text-xs font-bold tracking-wider mb-3 text-center py-1.5"
@@ -946,7 +1109,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* Description */}
               <div
                 className="font-mono text-xs leading-relaxed"
                 style={{ color: "#475569" }}
@@ -959,7 +1121,6 @@ export default function App() {
                 presence projection.
               </div>
 
-              {/* Signal chain display */}
               <div
                 className="mt-3 font-mono text-xs"
                 style={{
@@ -972,7 +1133,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Small Speaker Mode Panel */}
+            {/* ─── SMALL SPEAKER MODE ─── */}
             <div
               style={{
                 background: smallSpeakerMode
@@ -981,13 +1142,11 @@ export default function App() {
                 border: `2px solid ${smallSpeakerMode ? "#3b82f6" : "#1e2a3a"}`,
                 borderRadius: "10px",
                 padding: "20px",
-                marginBottom: "18px",
                 boxShadow: smallSpeakerMode
                   ? "0 0 24px rgba(59,130,246,0.25), inset 0 0 16px rgba(59,130,246,0.05)"
                   : "0 2px 8px rgba(0,0,0,0.4)",
               }}
             >
-              {/* Header row */}
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <span style={{ fontSize: "20px" }}>📱</span>
@@ -1001,41 +1160,15 @@ export default function App() {
                   >
                     SMALL SPEAKER MODE
                   </span>
-                  {smallSpeakerMode && (
-                    <span
-                      className="font-mono font-bold"
-                      style={{
-                        background: "#1e40af",
-                        color: "#bfdbfe",
-                        fontSize: "10px",
-                        padding: "2px 8px",
-                        borderRadius: "4px",
-                        border: "1px solid #3b82f6",
-                        letterSpacing: "0.1em",
-                      }}
-                    >
-                      120 dB READY
-                    </span>
-                  )}
                 </div>
-                <span
-                  className="font-mono text-xs"
-                  style={{ color: smallSpeakerMode ? "#3b82f6" : "#1e3a6e" }}
-                >
-                  {smallSpeakerMode ? "ACTIVE" : "OFF"}
-                </span>
-              </div>
-
-              {/* Toggle */}
-              <div className="flex items-center gap-4 mb-4">
                 <button
                   type="button"
-                  data-ocid="small_speaker.toggle"
+                  data-ocid="smallspeaker.toggle"
                   onClick={() => handleSmallSpeaker(!smallSpeakerMode)}
                   style={{
+                    width: "58px",
+                    height: "26px",
                     position: "relative",
-                    width: "60px",
-                    height: "30px",
                     background: smallSpeakerMode
                       ? "linear-gradient(90deg, #1d4ed8 0%, #3b82f6 100%)"
                       : "#0d1527",
@@ -1064,6 +1197,8 @@ export default function App() {
                     }}
                   />
                 </button>
+              </div>
+              <div className="flex items-center gap-2">
                 <span
                   className="font-mono text-xs"
                   style={{ color: smallSpeakerMode ? "#93c5fd" : "#334155" }}
@@ -1073,11 +1208,9 @@ export default function App() {
                     : "Enable for small Bluetooth speakers"}
                 </span>
               </div>
-
-              {/* Signal chain info */}
               {smallSpeakerMode && (
                 <div
-                  className="font-mono text-xs"
+                  className="font-mono text-xs mt-3"
                   style={{
                     color: "#1e40af",
                     borderTop: "1px solid #1e2a3a",
@@ -1088,28 +1221,31 @@ export default function App() {
                     PSYCHOACOUSTIC CHAIN ACTIVE:
                   </div>
                   <div style={{ color: "#3b82f6" }}>
-                    1kHz +3dB → 2kHz +4dB → 3.5kHz +3dB (Fletcher-Munson) → 5kHz
-                    +4dB → HARMONIC EXCITER → OUTPUT ×1.8
+                    1kHz +3dB → 2kHz +4dB → 3.5kHz +3dB → 5kHz +4dB → HARMONIC
+                    EXCITER → OUTPUT ×1.8
                   </div>
                 </div>
               )}
-
-              {/* Description */}
               <div
                 className="font-mono text-xs leading-relaxed mt-3"
                 style={{ color: "#475569" }}
               >
                 Boosts the frequencies your ear hears loudest — 1–5kHz presence
-                zone and 3.5kHz Fletcher-Munson peak. Adds harmonic richness so{" "}
+                zone.{" "}
                 <span
                   style={{ color: smallSpeakerMode ? "#60a5fa" : "#1e3a6e" }}
                 >
-                  small speakers punch way above their size.
+                  Small speakers punch way above their size.
                 </span>
               </div>
             </div>
 
             <SoundMagnet />
+
+            <SpeakerAdaptive
+              currentSettings={currentSettingsSnapshot}
+              onLoadPreset={handleLoadPreset}
+            />
           </>
         )}
       </main>
@@ -1133,6 +1269,37 @@ export default function App() {
           </a>
         </div>
       </footer>
+      {/* Upload Drawer */}
+      <UploadDrawer
+        open={uploadDrawerOpen}
+        onClose={() => setUploadDrawerOpen(false)}
+      />
+
+      {/* Floating Upload Button */}
+      <button
+        type="button"
+        data-ocid="upload_drawer.open_modal_button"
+        onClick={() => setUploadDrawerOpen(true)}
+        style={{
+          position: "fixed",
+          bottom: "24px",
+          right: "24px",
+          background: "linear-gradient(135deg, #1d4ed8, #1e40af)",
+          color: "#93c5fd",
+          border: "2px solid #3b82f6",
+          borderRadius: "8px",
+          padding: "12px 20px",
+          cursor: "pointer",
+          fontWeight: 800,
+          fontSize: "13px",
+          letterSpacing: "0.1em",
+          zIndex: 9990,
+          boxShadow: "0 4px 24px rgba(30,64,175,0.6)",
+          fontFamily: "Bricolage Grotesque, sans-serif",
+        }}
+      >
+        📁 UPLOAD
+      </button>
     </div>
   );
 }
